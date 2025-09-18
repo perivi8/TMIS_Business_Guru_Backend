@@ -50,7 +50,12 @@ else:
 
 # MongoDB connection for this module with error handling
 try:
-    client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'))
+    mongodb_uri = os.getenv('MONGODB_URI')
+    if not mongodb_uri:
+        raise Exception("MONGODB_URI environment variable not set")
+    
+    print(f"Client routes connecting to MongoDB: {mongodb_uri.split('@')[0]}@***")  # Hide credentials in logs
+    client = MongoClient(mongodb_uri)
     db = client.tmis_business_guru
     # Test connection
     db.command("ping")

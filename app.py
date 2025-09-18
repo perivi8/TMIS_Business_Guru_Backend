@@ -65,7 +65,12 @@ def revoked_token_callback(jwt_header, jwt_payload):
 
 # MongoDB connection
 try:
-    client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'))
+    mongodb_uri = os.getenv('MONGODB_URI')
+    if not mongodb_uri:
+        raise Exception("MONGODB_URI environment variable not set")
+    
+    print(f"Connecting to MongoDB: {mongodb_uri.split('@')[0]}@***")  # Hide credentials in logs
+    client = MongoClient(mongodb_uri)
     db = client.tmis_business_guru
     # Test connection
     db.command("ping")
