@@ -3,8 +3,6 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, get_jwt
 from werkzeug.utils import secure_filename
 import os
-import sys
-import logging
 from dotenv import load_dotenv
 import smtplib
 from datetime import datetime, timedelta
@@ -19,28 +17,14 @@ import bcrypt
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 app = Flask(__name__)
 
 # JWT Configuration with consistent secret key
 JWT_SECRET = os.getenv('JWT_SECRET_KEY', 'tmis-business-guru-secret-key-2024')
-if not JWT_SECRET or JWT_SECRET == 'your-secret-key-change-this-in-production':
-    logger.error("JWT_SECRET_KEY not properly configured!")
-    sys.exit(1)
-
 app.config['JWT_SECRET_KEY'] = JWT_SECRET
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 app.config['JWT_ALGORITHM'] = 'HS256'  # Explicitly set algorithm
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'uploads')
-
-logger.info("=== JWT CONFIGURATION ===")
-logger.info(f"JWT Secret Key: {'*' * len(JWT_SECRET)}")  # Hide actual key
 
 print(f"=== JWT CONFIGURATION ===")
 print(f"JWT Secret Key: {JWT_SECRET}")
@@ -51,50 +35,39 @@ print(f"JWT Expires: {app.config['JWT_ACCESS_TOKEN_EXPIRES']}")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize extensions
-CORS(app, origins=[
-    "http://localhost:4200", 
-    "http://localhost:4201", 
-    "https://tmis-business-guru.vercel.app",
-    "https://tmis-business-guru-*.vercel.app",  # Vercel preview deployments
-    "https://*.vercel.app"  # Any Vercel deployment
-], supports_credentials=True)
+CORS(app, origins=["http://localhost:4200", "http://localhost:4201"], supports_credentials=True)
 jwt = JWTManager(app)
 
 # JWT Error Handlers
 @jwt.expired_token_loader
 def expired_token_callback(jwt_header, jwt_payload):
-    logger.info("JWT Token expired")
+    print("JWT Token expired")
     return jsonify({'msg': 'Token has expired'}), 401
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
-    logger.info(f"JWT Invalid token: {error}")
+    print(f"JWT Invalid token: {error}")
     return jsonify({'msg': 'Invalid token'}), 422
 
 @jwt.unauthorized_loader
 def missing_token_callback(error):
-    logger.info(f"JWT Missing token: {error}")
+    print(f"JWT Missing token: {error}")
     return jsonify({'msg': 'Authorization token is required'}), 401
 
 @jwt.revoked_token_loader
 def revoked_token_callback(jwt_header, jwt_payload):
-    logger.info("JWT Token revoked")
+    print("JWT Token revoked")
     return jsonify({'msg': 'Token has been revoked'}), 401
 
 # MongoDB connection
 try:
-    mongodb_uri = os.getenv('MONGODB_URI')
-    if not mongodb_uri:
-        raise Exception("MONGODB_URI environment variable not set")
-    
-    logger.info(f"Connecting to MongoDB: {mongodb_uri.split('@')[0]}@***")  # Hide credentials in logs
-    client = MongoClient(mongodb_uri)
+    client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'))
     db = client.tmis_business_guru
     # Test connection
     db.command("ping")
-    logger.info("MongoDB connection successful")
+    print("MongoDB connection successful")
 except Exception as e:
-    logger.info(f"MongoDB connection failed: {str(e)}")
+    print(f"MongoDB connection failed: {str(e)}")
     db = None
 
 # Collections
@@ -138,7 +111,7 @@ def send_email(to_email, subject, body):
         
         return True
     except Exception as e:
-        logger.info(f"Email sending failed: {str(e)}")
+        print(f"Email sending failed: {str(e)}")
         return False
 
 @app.route('/api/register', methods=['POST'])
@@ -184,7 +157,7 @@ def register():
         }), 201
         
     except Exception as e:
-        logger.info(f"Registration error: {e}")
+        print(f"Registration error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/login', methods=['POST'])
@@ -194,25 +167,25 @@ def login():
         email = data.get('email')
         password = data.get('password')
         
-        logger.info(f"=== LOGIN DEBUG ===")
-        logger.info(f"Login attempt for email: {email}")
+        print(f"=== LOGIN DEBUG ===")
+        print(f"Login attempt for email: {email}")
         
         if not email or not password:
             return jsonify({'error': 'Email and password are required'}), 400
         
         # Check database connection
         if db is None or users_collection is None:
-            logger.info("Database connection not available")
+            print("Database connection not available")
             return jsonify({'error': 'Database connection failed'}), 500
         
         # Find user
         user = users_collection.find_one({'email': email})
-        logger.info(f"User found: {user is not None}")
+        print(f"User found: {user is not None}")
         
         if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password']):
             return jsonify({'error': 'Invalid credentials'}), 401
         
-        logger.info(f"User role: {user['role']}")
+        print(f"User role: {user['role']}")
         
         # Create access token with consistent secret
         access_token = create_access_token(
@@ -220,9 +193,9 @@ def login():
             additional_claims={'role': user['role'], 'email': user['email']}
         )
         
-        logger.info(f"JWT token created successfully")
-        logger.info(f"Token: {access_token[:50]}...")
-        logger.info(f"Using JWT Secret: {JWT_SECRET}")
+        print(f"JWT token created successfully")
+        print(f"Token: {access_token[:50]}...")
+        print(f"Using JWT Secret: {JWT_SECRET}")
         
         return jsonify({
             'access_token': access_token,
@@ -235,7 +208,7 @@ def login():
         }), 200
         
     except Exception as e:
-        logger.info(f"Login error: {e}")
+        print(f"Login error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/users', methods=['GET'])
@@ -260,7 +233,7 @@ def get_users():
         return jsonify({'users': users}), 200
         
     except Exception as e:
-        logger.info(f"Get users error: {e}")
+        print(f"Get users error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/team', methods=['GET'])
@@ -283,19 +256,19 @@ def get_team():
         for user in team_members:
             user['_id'] = str(user['_id'])
         
-        logger.info(f"Team endpoint: Found {len(team_members)} team members")
+        print(f"Team endpoint: Found {len(team_members)} team members")
         
         return jsonify({'users': team_members}), 200
         
     except Exception as e:
-        logger.info(f"Get team error: {e}")
+        print(f"Get team error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/debug/users', methods=['GET'])
 def debug_all_users():
     """Debug endpoint to check all users in database - NO JWT required for troubleshooting"""
     try:
-        logger.info(f"=== DEBUG ALL USERS (NO JWT) ===")
+        print(f"=== DEBUG ALL USERS (NO JWT) ===")
         
         # Check database connection
         if db is None or users_collection is None:
@@ -308,11 +281,11 @@ def debug_all_users():
         # Get all users in database
         all_users = list(users_collection.find({}, {'password': 0}))
         
-        logger.info(f"Total users in database: {len(all_users)}")
+        print(f"Total users in database: {len(all_users)}")
         
         for user in all_users:
             user['_id'] = str(user['_id'])
-            logger.info(f"User: {user['email']} - Role: {user['role']} - Username: {user['username']}")
+            print(f"User: {user['email']} - Role: {user['role']} - Username: {user['username']}")
         
         # Count by categories
         admin_count = len([u for u in all_users if u['role'] == 'admin'])
@@ -320,10 +293,10 @@ def debug_all_users():
         tmis_count = len([u for u in all_users if u['email'].startswith('tmis.')])
         tmis_users = len([u for u in all_users if u['email'].startswith('tmis.') and u['role'] == 'user'])
         
-        logger.info(f"Admin users: {admin_count}")
-        logger.info(f"Regular users: {user_count}")
-        logger.info(f"TMIS email users: {tmis_count}")
-        logger.info(f"TMIS users with user role: {tmis_users}")
+        print(f"Admin users: {admin_count}")
+        print(f"Regular users: {user_count}")
+        print(f"TMIS email users: {tmis_count}")
+        print(f"TMIS users with user role: {tmis_users}")
         
         return jsonify({
             'success': True,
@@ -338,7 +311,7 @@ def debug_all_users():
         }), 200
         
     except Exception as e:
-        logger.info(f"Error in debug_all_users: {str(e)}")
+        print(f"Error in debug_all_users: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/debug/database', methods=['GET'])
@@ -409,7 +382,7 @@ def debug_database():
         }), 200
         
     except Exception as e:
-        logger.info(f"Error in debug_database: {str(e)}")
+        print(f"Error in debug_database: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/test-jwt', methods=['GET'])
@@ -429,7 +402,7 @@ def test_jwt():
         }), 200
         
     except Exception as e:
-        logger.info(f"JWT test error: {e}")
+        print(f"JWT test error: {e}")
         return jsonify({'error': str(e)}), 500
 
 # Export app for main.py to use

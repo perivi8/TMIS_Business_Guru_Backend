@@ -8,7 +8,7 @@ from bson.json_util import dumps
 import json
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from email_service import EmailService
+from email_service import email_service
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -50,12 +50,7 @@ else:
 
 # MongoDB connection for this module with error handling
 try:
-    mongodb_uri = os.getenv('MONGODB_URI')
-    if not mongodb_uri:
-        raise Exception("MONGODB_URI environment variable not set")
-    
-    print(f"Client routes connecting to MongoDB: {mongodb_uri.split('@')[0]}@***")  # Hide credentials in logs
-    client = MongoClient(mongodb_uri)
+    client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'))
     db = client.tmis_business_guru
     # Test connection
     db.command("ping")
@@ -66,9 +61,6 @@ except Exception as e:
     print(f"MongoDB connection failed for client_routes module: {str(e)}")
     clients_collection = None
     users_collection = None
-
-# Initialize email service
-email_service = EmailService()
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""
