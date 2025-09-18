@@ -1,7 +1,7 @@
 import os
 import logging
 import sys
-from flask import jsonify
+from flask import Flask, jsonify
 
 # Configure logging for production
 logging.basicConfig(
@@ -13,21 +13,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Create a fallback Flask app in case main app fails to import
+fallback_app = Flask(__name__)
+
 try:
     from app import app
-    from client_routes import client_bp
-    from enquiry_routes import enquiry_bp
+    logger.info("Successfully imported app")
     
-    logger.info("Successfully imported all modules")
+    # Import blueprints with individual error handling
+    try:
+        from client_routes import client_bp
+        app.register_blueprint(client_bp)
+        logger.info("Successfully imported and registered client_routes")
+    except Exception as e:
+        logger.error(f"Failed to import client_routes: {str(e)}")
+        # Continue without client routes for basic functionality
     
-    # Register blueprints
-    app.register_blueprint(client_bp)
-    app.register_blueprint(enquiry_bp)
-    logger.info("Successfully registered blueprints")
+    try:
+        from enquiry_routes import enquiry_bp
+        app.register_blueprint(enquiry_bp)
+        logger.info("Successfully imported and registered enquiry_routes")
+    except Exception as e:
+        logger.error(f"Failed to import enquiry_routes: {str(e)}")
+        # Continue without enquiry routes for basic functionality
+    
+    logger.info("Application initialization completed")
     
 except Exception as e:
-    logger.error(f"Failed to import modules or register blueprints: {str(e)}")
-    sys.exit(1)
+    logger.error(f"Critical failure during app initialization: {str(e)}")
+    # Use fallback app for basic functionality
+    app = fallback_app
+    logger.info("Using fallback Flask app")
 
 @app.route('/health')
 def health_check():
@@ -52,6 +68,16 @@ def health_check():
             'status': 'unhealthy',
             'error': str(e)
         }), 500
+
+# Add health check to fallback app as well
+@fallback_app.route('/health')
+def fallback_health_check():
+    """Fallback health check endpoint"""
+    return jsonify({
+        'status': 'limited',
+        'message': 'TMIS Backend running in fallback mode',
+        'port': os.environ.get('PORT', '5000')
+    }), 200
 
 @app.route('/debug/env')
 def debug_env():

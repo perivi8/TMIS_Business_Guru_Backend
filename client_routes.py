@@ -8,7 +8,7 @@ from bson.json_util import dumps
 import json
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from email_service import email_service
+from email_service import EmailService
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -66,6 +66,9 @@ except Exception as e:
     print(f"MongoDB connection failed for client_routes module: {str(e)}")
     clients_collection = None
     users_collection = None
+
+# Initialize email service
+email_service = EmailService()
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""

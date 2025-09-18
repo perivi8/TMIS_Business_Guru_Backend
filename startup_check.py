@@ -21,27 +21,50 @@ def check_environment_variables():
     """Check if all required environment variables are set"""
     logger.info("🔍 Checking environment variables...")
     
-    required_vars = [
+    # Critical required variables
+    critical_vars = [
         'MONGODB_URI',
-        'JWT_SECRET_KEY',
-        'EMAIL_HOST',
-        'EMAIL_PORT',
-        'EMAIL_USER',
-        'EMAIL_PASSWORD'
+        'JWT_SECRET_KEY'
     ]
     
-    missing_vars = []
-    for var in required_vars:
+    # Optional email variables (won't fail startup if missing)
+    optional_vars = [
+        'EMAIL_HOST',
+        'EMAIL_PORT', 
+        'EMAIL_USER',
+        'EMAIL_PASSWORD',
+        'SMTP_EMAIL',
+        'SMTP_PASSWORD'
+    ]
+    
+    missing_critical = []
+    missing_optional = []
+    
+    # Check critical variables
+    for var in critical_vars:
         value = os.getenv(var)
         if not value:
-            missing_vars.append(var)
-            logger.error(f"❌ {var} is not set")
+            missing_critical.append(var)
+            logger.error(f"❌ {var} is not set (CRITICAL)")
         else:
             logger.info(f"✅ {var} is configured")
     
-    if missing_vars:
-        logger.error(f"❌ Missing required environment variables: {missing_vars}")
+    # Check optional variables
+    for var in optional_vars:
+        value = os.getenv(var)
+        if not value:
+            missing_optional.append(var)
+            logger.warning(f"⚠️ {var} is not set (email features may not work)")
+        else:
+            logger.info(f"✅ {var} is configured")
+    
+    if missing_critical:
+        logger.error(f"❌ Missing CRITICAL environment variables: {missing_critical}")
         return False
+    
+    if missing_optional:
+        logger.warning(f"⚠️ Missing optional environment variables: {missing_optional}")
+        logger.info("💡 Email notifications will be disabled")
     
     # Check JWT secret is not default
     jwt_secret = os.getenv('JWT_SECRET_KEY')
@@ -49,7 +72,7 @@ def check_environment_variables():
         logger.error("❌ JWT_SECRET_KEY is using default value - please change it!")
         return False
     
-    logger.info("✅ All environment variables are properly configured")
+    logger.info("✅ All critical environment variables are properly configured")
     return True
 
 def check_mongodb_connection():

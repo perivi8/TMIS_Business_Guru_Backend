@@ -54,7 +54,9 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 CORS(app, origins=[
     "http://localhost:4200", 
     "http://localhost:4201", 
-    "https://tmis-business-guru.vercel.app"
+    "https://tmis-business-guru.vercel.app",
+    "https://tmis-business-guru-*.vercel.app",  # Vercel preview deployments
+    "https://*.vercel.app"  # Any Vercel deployment
 ], supports_credentials=True)
 jwt = JWTManager(app)
 
