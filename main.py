@@ -1,23 +1,95 @@
 import os
 import logging
-from app import app
-from client_routes import client_bp
-from enquiry_routes import enquiry_bp
+import sys
+from flask import jsonify
 
 # Configure logging for production
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger(__name__)
 
-# Register blueprints
-app.register_blueprint(client_bp)
-app.register_blueprint(enquiry_bp)
+try:
+    from app import app
+    from client_routes import client_bp
+    from enquiry_routes import enquiry_bp
+    
+    logger.info("Successfully imported all modules")
+    
+    # Register blueprints
+    app.register_blueprint(client_bp)
+    app.register_blueprint(enquiry_bp)
+    logger.info("Successfully registered blueprints")
+    
+except Exception as e:
+    logger.error(f"Failed to import modules or register blueprints: {str(e)}")
+    sys.exit(1)
 
 @app.route('/health')
 def health_check():
     """Health check endpoint for Render"""
-    return {'status': 'healthy', 'message': 'TMIS Business Guru Backend is running'}, 200
+    try:
+        # Check environment variables
+        mongodb_uri = os.getenv('MONGODB_URI')
+        jwt_secret = os.getenv('JWT_SECRET_KEY')
+        
+        status = {
+            'status': 'healthy',
+            'message': 'TMIS Business Guru Backend is running',
+            'mongodb_configured': bool(mongodb_uri),
+            'jwt_configured': bool(jwt_secret),
+            'port': os.environ.get('PORT', '5000')
+        }
+        
+        return jsonify(status), 200
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e)
+        }), 500
+
+@app.route('/debug/env')
+def debug_env():
+    """Debug endpoint to check environment variables (remove in production)"""
+    try:
+        env_vars = {
+            'MONGODB_URI': 'SET' if os.getenv('MONGODB_URI') else 'NOT SET',
+            'JWT_SECRET_KEY': 'SET' if os.getenv('JWT_SECRET_KEY') else 'NOT SET',
+            'EMAIL_HOST': os.getenv('EMAIL_HOST', 'NOT SET'),
+            'EMAIL_PORT': os.getenv('EMAIL_PORT', 'NOT SET'),
+            'FLASK_ENV': os.getenv('FLASK_ENV', 'NOT SET'),
+            'PORT': os.getenv('PORT', 'NOT SET')
+        }
+        return jsonify(env_vars), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {str(error)}")
+    return jsonify({
+        'error': 'Internal server error',
+        'message': 'Please check server logs for details'
+    }), 500
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({
+        'error': 'Not found',
+        'message': 'The requested resource was not found'
+    }), 404
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    logger.info(f"Starting TMIS Business Guru Backend on port {port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+    try:
+        port = int(os.environ.get('PORT', 5000))
+        logger.info(f"Starting TMIS Business Guru Backend on port {port}")
+        logger.info(f"Environment: {os.getenv('FLASK_ENV', 'development')}")
+        app.run(debug=False, host='0.0.0.0', port=port)
+    except Exception as e:
+        logger.error(f"Failed to start application: {str(e)}")
+        sys.exit(1)
