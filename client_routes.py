@@ -84,31 +84,34 @@ else:
 MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
     print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found in client_routes!")
-    print("🔧 Using fallback MongoDB URI for this deployment...")
-    MONGODB_URI = "mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0"
-
-print(f"🔄 Client routes connecting to MongoDB...")
-print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
-
-try:
-    client = MongoClient(MONGODB_URI)
-    db = client.tmis_business_guru
-    # Test connection
-    db.command("ping")
-    clients_collection = db.clients
-    users_collection = db.users
-    print("✅ MongoDB connection successful for client_routes module")
-except Exception as e:
-    print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
-    print("🔍 Troubleshooting:")
-    print("1. Check if MongoDB URI includes database name")
-    print("2. Verify MongoDB Atlas cluster is running")
-    print("3. Check network connectivity and IP whitelist")
-    print("4. Verify credentials in MongoDB URI")
+    print("🔧 This will cause database operations to fail gracefully")
     # Set to None but don't crash the module
     db = None
     clients_collection = None
     users_collection = None
+else:
+    print(f"🔄 Client routes connecting to MongoDB...")
+    print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
+
+    try:
+        client = MongoClient(MONGODB_URI)
+        db = client.tmis_business_guru
+        # Test connection
+        db.command("ping")
+        clients_collection = db.clients
+        users_collection = db.users
+        print("✅ MongoDB connection successful for client_routes module")
+    except Exception as e:
+        print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
+        print("🔍 Troubleshooting:")
+        print("1. Check if MongoDB URI includes database name")
+        print("2. Verify MongoDB Atlas cluster is running")
+        print("3. Check network connectivity and IP whitelist")
+        print("4. Verify credentials in MongoDB URI")
+        # Set to None but don't crash the module
+        db = None
+        clients_collection = None
+        users_collection = None
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""
@@ -327,8 +330,10 @@ def create_client():
         # Handle file uploads - CLOUDINARY ONLY (no local storage)
         uploaded_files = {}
         
-        # Check if Cloudinary is available
-        if not CLOUDINARY_AVAILABLE or not CLOUDINARY_ENABLED:
+        # Check if Cloudinary is available - only if files are being uploaded
+        has_files_to_upload = any(file and file.filename for file in files.values()) if files else False
+        
+        if has_files_to_upload and (not CLOUDINARY_AVAILABLE or not CLOUDINARY_ENABLED):
             return jsonify({
                 'error': 'Document upload service unavailable. Cloudinary is required for document storage.',
                 'details': 'Please contact administrator to enable Cloudinary service.'
@@ -821,8 +826,10 @@ def update_client_details(client_id):
             # Handle file uploads - CLOUDINARY ONLY (no local storage)
             documents = client.get('documents', {})
             
-            # Check if Cloudinary is available for file uploads
-            if files and (not CLOUDINARY_AVAILABLE or not CLOUDINARY_ENABLED):
+            # Check if Cloudinary is available for file uploads - only if files are being uploaded
+            has_files_to_upload = any(file and file.filename for file in files.values()) if files else False
+            
+            if has_files_to_upload and (not CLOUDINARY_AVAILABLE or not CLOUDINARY_ENABLED):
                 return jsonify({
                     'error': 'Document upload service unavailable. Cloudinary is required for document storage.',
                     'details': 'Please contact administrator to enable Cloudinary service.'
