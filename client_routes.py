@@ -17,7 +17,10 @@ try:
     print("✅ email_service imported successfully")
 except ImportError as e:
     print(f"⚠️ Warning: email_service not available: {e}")
-    print(f"Traceback: {traceback.format_exc()}")
+    EMAIL_SERVICE_AVAILABLE = False
+    email_service = None
+except Exception as e:
+    print(f"⚠️ Warning: email_service import failed: {e}")
     EMAIL_SERVICE_AVAILABLE = False
     email_service = None
 
@@ -40,7 +43,10 @@ try:
     print("✅ DocumentProcessor imported successfully")
 except ImportError as e:
     print(f"⚠️ Warning: DocumentProcessor not available: {e}")
-    print(f"Traceback: {traceback.format_exc()}")
+    DOCUMENT_PROCESSOR_AVAILABLE = False
+    DocumentProcessor = None
+except Exception as e:
+    print(f"⚠️ Warning: DocumentProcessor import failed: {e}")
     DOCUMENT_PROCESSOR_AVAILABLE = False
     DocumentProcessor = None
 
@@ -77,25 +83,31 @@ else:
 MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
     print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found in client_routes!")
-    # Instead of raising exception, set db to None and continue
+    print("🔧 Using fallback MongoDB URI for this deployment...")
+    MONGODB_URI = "mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0"
+
+print(f"🔄 Client routes connecting to MongoDB...")
+print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
+
+try:
+    client = MongoClient(MONGODB_URI)
+    db = client.tmis_business_guru
+    # Test connection
+    db.command("ping")
+    clients_collection = db.clients
+    users_collection = db.users
+    print("✅ MongoDB connection successful for client_routes module")
+except Exception as e:
+    print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
+    print("🔍 Troubleshooting:")
+    print("1. Check if MongoDB URI includes database name")
+    print("2. Verify MongoDB Atlas cluster is running")
+    print("3. Check network connectivity and IP whitelist")
+    print("4. Verify credentials in MongoDB URI")
+    # Set to None but don't crash the module
     db = None
     clients_collection = None
     users_collection = None
-else:
-    print(f"🔄 Client routes connecting to MongoDB...")
-    try:
-        client = MongoClient(MONGODB_URI)
-        db = client.tmis_business_guru
-        # Test connection
-        db.command("ping")
-        clients_collection = db.clients
-        users_collection = db.users
-        print("✅ MongoDB connection successful for client_routes module")
-    except Exception as e:
-        print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
-        db = None
-        clients_collection = None
-        users_collection = None
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""

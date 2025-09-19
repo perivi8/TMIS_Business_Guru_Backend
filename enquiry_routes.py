@@ -21,7 +21,8 @@ enquiry_bp = Blueprint('enquiry', __name__)
 try:
     mongodb_uri = os.getenv('MONGODB_URI')
     if not mongodb_uri:
-        raise Exception("MONGODB_URI not found in environment variables")
+        logger.warning("MONGODB_URI not found in environment variables, using fallback")
+        mongodb_uri = "mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0"
     
     logger.info(f"Connecting to MongoDB Atlas...")
     client = MongoClient(mongodb_uri)
@@ -50,7 +51,11 @@ try:
     
 except Exception as e:
     logger.error(f"MongoDB Atlas connection failed: {e}")
-    raise Exception(f"Failed to connect to MongoDB: {e}")
+    logger.warning("Setting database collections to None - enquiry routes will return errors")
+    # Don't raise exception, just set collections to None
+    db = None
+    enquiries_collection = None
+    users_collection = None
 
 def serialize_enquiry(enquiry):
     """Convert MongoDB document to JSON serializable format"""
