@@ -35,7 +35,7 @@ print(f"JWT Expires: {app.config['JWT_ACCESS_TOKEN_EXPIRES']}")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize extensions
-CORS(app, origins=["http://localhost:4200", "http://localhost:4201"], supports_credentials=True)
+CORS(app, origins=["http://localhost:4200", "http://localhost:4201", "https://tmis-business-guru.vercel.app"], supports_credentials=True)
 jwt = JWTManager(app)
 
 # JWT Error Handlers
