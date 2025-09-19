@@ -77,20 +77,25 @@ else:
 MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
     print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found in client_routes!")
-    raise Exception("MONGODB_URI not found in environment variables. Set it in your .env or Render environment settings.")
-
-print(f"🔄 Client routes connecting to MongoDB...")
-try:
-    client = MongoClient(MONGODB_URI)
-    db = client.tmis_business_guru
-    # Test connection
-    db.command("ping")
-    clients_collection = db.clients
-    users_collection = db.users
-    print("✅ MongoDB connection successful for client_routes module")
-except Exception as e:
-    print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
-    raise Exception(f"Failed to connect to MongoDB in client_routes: {str(e)}")
+    # Instead of raising exception, set db to None and continue
+    db = None
+    clients_collection = None
+    users_collection = None
+else:
+    print(f"🔄 Client routes connecting to MongoDB...")
+    try:
+        client = MongoClient(MONGODB_URI)
+        db = client.tmis_business_guru
+        # Test connection
+        db.command("ping")
+        clients_collection = db.clients
+        users_collection = db.users
+        print("✅ MongoDB connection successful for client_routes module")
+    except Exception as e:
+        print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
+        db = None
+        clients_collection = None
+        users_collection = None
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""
