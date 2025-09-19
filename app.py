@@ -602,22 +602,122 @@ def test_routes():
     try:
         # Get all registered routes
         routes = []
+        api_routes = []
         for rule in app.url_map.iter_rules():
-            routes.append({
+            route_info = {
                 'endpoint': rule.endpoint,
                 'methods': list(rule.methods),
                 'path': str(rule)
-            })
+            }
+            routes.append(route_info)
+            
+            # Separate API routes
+            if str(rule).startswith('/api/'):
+                api_routes.append(route_info)
+        
+        # Check for critical endpoints
+        critical_endpoints = ['/api/clients', '/api/enquiries', '/api/health', '/api/status']
+        endpoint_status = {}
+        for endpoint in critical_endpoints:
+            found = any(endpoint in route['path'] for route in api_routes)
+            endpoint_status[endpoint] = 'FOUND' if found else 'MISSING'
         
         return jsonify({
             'status': 'success',
             'message': 'Routes test endpoint',
             'total_routes': len(routes),
-            'routes': sorted(routes, key=lambda x: x['path'])
+            'api_routes_count': len(api_routes),
+            'critical_endpoints': endpoint_status,
+            'api_routes': sorted(api_routes, key=lambda x: x['path']),
+            'blueprints_registered': list(app.blueprints.keys()),
+            'timestamp': datetime.utcnow().isoformat()
         }), 200
         
     except Exception as e:
         print(f"Routes test error: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debug/production', methods=['GET'])
+def debug_production():
+    """Comprehensive production debugging endpoint"""
+    try:
+        # Environment check
+        env_status = {
+            'MONGODB_URI': 'SET' if os.getenv('MONGODB_URI') else 'MISSING',
+            'JWT_SECRET_KEY': 'SET' if os.getenv('JWT_SECRET_KEY') else 'MISSING',
+            'FLASK_ENV': os.getenv('FLASK_ENV', 'NOT_SET'),
+            'CLOUDINARY_ENABLED': os.getenv('CLOUDINARY_ENABLED', 'NOT_SET'),
+        }
+        
+        # Database status
+        db_status = {
+            'connection': 'UNKNOWN',
+            'collections': {},
+            'error': None
+        }
+        
+        try:
+            if db is not None:
+                db.command("ping")
+                db_status['connection'] = 'CONNECTED'
+                
+                # Check collections
+                collections = ['users', 'clients', 'enquiries']
+                for collection_name in collections:
+                    try:
+                        count = db[collection_name].count_documents({})
+                        db_status['collections'][collection_name] = count
+                    except Exception as col_error:
+                        db_status['collections'][collection_name] = f'ERROR: {str(col_error)}'
+            else:
+                db_status['connection'] = 'NOT_CONNECTED'
+                db_status['error'] = 'Database object is None'
+        except Exception as db_error:
+            db_status['connection'] = 'ERROR'
+            db_status['error'] = str(db_error)
+        
+        # Routes check
+        api_routes = []
+        for rule in app.url_map.iter_rules():
+            if str(rule).startswith('/api/'):
+                api_routes.append({
+                    'path': str(rule),
+                    'methods': list(rule.methods),
+                    'endpoint': rule.endpoint
+                })
+        
+        # Blueprint status
+        blueprint_status = {
+            'registered': list(app.blueprints.keys()),
+            'count': len(app.blueprints)
+        }
+        
+        return jsonify({
+            'status': 'success',
+            'timestamp': datetime.utcnow().isoformat(),
+            'environment': env_status,
+            'database': db_status,
+            'routes': {
+                'api_routes_count': len(api_routes),
+                'api_routes': api_routes[:10],  # First 10 routes
+                'critical_endpoints': {
+                    '/api/clients': any('/api/clients' in route['path'] for route in api_routes),
+                    '/api/enquiries': any('/api/enquiries' in route['path'] for route in api_routes),
+                    '/api/health': any('/api/health' in route['path'] for route in api_routes),
+                }
+            },
+            'blueprints': blueprint_status,
+            'system': {
+                'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                'working_directory': os.getcwd()
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Debug endpoint failed: {str(e)}',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 # Export app for main.py to use

@@ -25,7 +25,7 @@ try:
         raise ValueError("MONGODB_URI environment variable is required")
     
     logger.info(f"Connecting to MongoDB Atlas...")
-    client = MongoClient(mongodb_uri)
+    client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)  # 5 second timeout
     
     # Test connection
     client.admin.command('ping')

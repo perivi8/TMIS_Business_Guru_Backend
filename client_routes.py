@@ -94,7 +94,7 @@ else:
     print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
 
     try:
-        client = MongoClient(MONGODB_URI)
+        client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)  # 5 second timeout
         db = client.tmis_business_guru
         # Test connection
         db.command("ping")

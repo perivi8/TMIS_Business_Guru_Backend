@@ -10,12 +10,11 @@ print(f"Python version: {sys.version}")
 print(f"Current working directory: {os.getcwd()}")
 print(f"Python path: {sys.path}")
 
-# Force import client_routes with better error handling
+# Force import client_routes with better error handling and database fallback
 client_bp = None
 try:
     print("🔄 Attempting to import client_routes...")
     print(f"Current working directory: {os.getcwd()}")
-    print(f"Files in current directory: {os.listdir('.')}")
     
     # Check if client_routes.py exists
     if os.path.exists('client_routes.py'):
@@ -28,45 +27,95 @@ try:
     print(f"Client blueprint name: {client_bp.name}")
     print(f"Client blueprint url_prefix: {getattr(client_bp, 'url_prefix', 'None')}")
     
-except ImportError as e:
-    print(f"❌ ImportError in client_routes: {e}")
+except Exception as e:
+    print(f"❌ Error importing client_routes: {e}")
     print(f"Traceback: {traceback.format_exc()}")
     
-    # Try to create a minimal client blueprint as fallback
+    # Create a working fallback client blueprint with database access
     try:
         from flask import Blueprint, jsonify
-        from flask_jwt_extended import jwt_required
+        from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
         
-        print("🔄 Creating fallback client blueprint...")
+        print("🔄 Creating enhanced fallback client blueprint...")
         client_bp = Blueprint('client', __name__)
         
         @client_bp.route('/clients', methods=['GET'])
         @jwt_required()
         def get_clients_fallback():
-            return jsonify({
-                'error': 'Client routes module failed to import properly',
-                'clients': [],
-                'fallback': True,
-                'message': 'Blueprint import failed - check server logs'
-            }), 500
+            try:
+                # Try to get database connection from app
+                from app import db, clients_collection
+                
+                if db is None or clients_collection is None:
+                    return jsonify({
+                        'error': 'Database connection not available',
+                        'clients': [],
+                        'fallback': True,
+                        'message': 'MongoDB connection failed - check environment variables'
+                    }), 500
+                
+                # Get current user info
+                current_user_id = get_jwt_identity()
+                claims = get_jwt()
+                user_role = claims.get('role', 'user')
+                
+                print(f"Fallback route: User {current_user_id} with role {user_role} requesting clients")
+                
+                # Get clients from database
+                try:
+                    if user_role == 'admin':
+                        # Admin can see all clients
+                        clients_cursor = clients_collection.find()
+                    else:
+                        # Regular users see only their clients
+                        clients_cursor = clients_collection.find({'created_by': current_user_id})
+                    
+                    clients_list = []
+                    for client in clients_cursor:
+                        # Convert ObjectId to string
+                        client['_id'] = str(client['_id'])
+                        clients_list.append(client)
+                    
+                    print(f"Fallback route: Found {len(clients_list)} clients for user {current_user_id}")
+                    
+                    return jsonify({
+                        'clients': clients_list,
+                        'fallback': True,
+                        'message': 'Using fallback route - blueprint import failed',
+                        'count': len(clients_list)
+                    }), 200
+                    
+                except Exception as db_error:
+                    print(f"Database query error: {db_error}")
+                    return jsonify({
+                        'error': f'Database query failed: {str(db_error)}',
+                        'clients': [],
+                        'fallback': True,
+                        'message': 'Database connection exists but query failed'
+                    }), 500
+                    
+            except Exception as fallback_error:
+                print(f"Fallback route error: {fallback_error}")
+                return jsonify({
+                    'error': f'Fallback route failed: {str(fallback_error)}',
+                    'clients': [],
+                    'fallback': True,
+                    'message': 'Complete system failure'
+                }), 500
         
         @client_bp.route('/clients/test', methods=['GET'])
         def test_clients_fallback():
             return jsonify({
-                'status': 'fallback',
+                'status': 'fallback_success',
                 'message': 'Client routes fallback is working',
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.utcnow().isoformat(),
+                'note': 'Original client_routes.py failed to import'
             }), 200
         
-        print("✅ Fallback client blueprint created")
+        print("✅ Enhanced fallback client blueprint created with database access")
     except Exception as fallback_error:
         print(f"❌ Failed to create fallback blueprint: {fallback_error}")
         client_bp = None
-        
-except Exception as e:
-    print(f"❌ Unexpected error importing client_routes: {e}")
-    print(f"Traceback: {traceback.format_exc()}")
-    client_bp = None
 
 # Force import enquiry_routes with better error handling
 enquiry_bp = None
@@ -84,45 +133,97 @@ try:
     print(f"Enquiry blueprint name: {enquiry_bp.name}")
     print(f"Enquiry blueprint url_prefix: {getattr(enquiry_bp, 'url_prefix', 'None')}")
     
-except ImportError as e:
-    print(f"❌ ImportError in enquiry_routes: {e}")
+except Exception as e:
+    print(f"❌ Error importing enquiry_routes: {e}")
     print(f"Traceback: {traceback.format_exc()}")
     
-    # Try to create a minimal enquiry blueprint as fallback
+    # Create a working fallback enquiry blueprint with database access
     try:
         from flask import Blueprint, jsonify
-        from flask_jwt_extended import jwt_required
+        from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
         
-        print("🔄 Creating fallback enquiry blueprint...")
+        print("🔄 Creating enhanced fallback enquiry blueprint...")
         enquiry_bp = Blueprint('enquiry', __name__)
         
         @enquiry_bp.route('/enquiries', methods=['GET'])
         @jwt_required()
         def get_enquiries_fallback():
-            return jsonify({
-                'error': 'Enquiry routes module failed to import properly',
-                'enquiries': [],
-                'fallback': True,
-                'message': 'Blueprint import failed - check server logs'
-            }), 500
+            try:
+                # Try to get database connection from app
+                from app import db
+                
+                if db is None:
+                    return jsonify({
+                        'error': 'Database connection not available',
+                        'enquiries': [],
+                        'fallback': True,
+                        'message': 'MongoDB connection failed - check environment variables'
+                    }), 500
+                
+                # Get current user info
+                current_user_id = get_jwt_identity()
+                claims = get_jwt()
+                user_role = claims.get('role', 'user')
+                
+                print(f"Fallback enquiry route: User {current_user_id} with role {user_role} requesting enquiries")
+                
+                # Get enquiries from database
+                try:
+                    enquiries_collection = db.enquiries
+                    
+                    if user_role == 'admin':
+                        # Admin can see all enquiries
+                        enquiries_cursor = enquiries_collection.find()
+                    else:
+                        # Regular users see only their enquiries
+                        enquiries_cursor = enquiries_collection.find({'created_by': current_user_id})
+                    
+                    enquiries_list = []
+                    for enquiry in enquiries_cursor:
+                        # Convert ObjectId to string
+                        enquiry['_id'] = str(enquiry['_id'])
+                        enquiries_list.append(enquiry)
+                    
+                    print(f"Fallback enquiry route: Found {len(enquiries_list)} enquiries for user {current_user_id}")
+                    
+                    return jsonify({
+                        'enquiries': enquiries_list,
+                        'fallback': True,
+                        'message': 'Using fallback route - blueprint import failed',
+                        'count': len(enquiries_list)
+                    }), 200
+                    
+                except Exception as db_error:
+                    print(f"Enquiry database query error: {db_error}")
+                    return jsonify({
+                        'error': f'Database query failed: {str(db_error)}',
+                        'enquiries': [],
+                        'fallback': True,
+                        'message': 'Database connection exists but query failed'
+                    }), 500
+                    
+            except Exception as fallback_error:
+                print(f"Enquiry fallback route error: {fallback_error}")
+                return jsonify({
+                    'error': f'Fallback route failed: {str(fallback_error)}',
+                    'enquiries': [],
+                    'fallback': True,
+                    'message': 'Complete system failure'
+                }), 500
         
         @enquiry_bp.route('/enquiries/test', methods=['GET'])
         def test_enquiries_fallback():
             return jsonify({
-                'status': 'fallback',
+                'status': 'fallback_success',
                 'message': 'Enquiry routes fallback is working',
-                'timestamp': datetime.utcnow().isoformat()
+                'timestamp': datetime.utcnow().isoformat(),
+                'note': 'Original enquiry_routes.py failed to import'
             }), 200
         
-        print("✅ Fallback enquiry blueprint created")
+        print("✅ Enhanced fallback enquiry blueprint created with database access")
     except Exception as fallback_error:
         print(f"❌ Failed to create fallback enquiry blueprint: {fallback_error}")
         enquiry_bp = None
-        
-except Exception as e:
-    print(f"❌ Unexpected error importing enquiry_routes: {e}")
-    print(f"Traceback: {traceback.format_exc()}")
-    enquiry_bp = None
 
 # Register blueprints with URL prefixes - ALWAYS try to register something
 if client_bp:
