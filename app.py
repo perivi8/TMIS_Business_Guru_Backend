@@ -478,4 +478,28 @@ def test_jwt():
         print(f"JWT test error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/test-routes', methods=['GET'])
+def test_routes():
+    """Test endpoint to verify routes are registered"""
+    try:
+        # Get all registered routes
+        routes = []
+        for rule in app.url_map.iter_rules():
+            routes.append({
+                'endpoint': rule.endpoint,
+                'methods': list(rule.methods),
+                'path': str(rule)
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Routes test endpoint',
+            'total_routes': len(routes),
+            'routes': sorted(routes, key=lambda x: x['path'])
+        }), 200
+        
+    except Exception as e:
+        print(f"Routes test error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # Export app for main.py to use
