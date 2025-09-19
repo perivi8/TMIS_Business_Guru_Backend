@@ -144,7 +144,17 @@ def delete_from_cloudinary(public_id, resource_type="image"):
         print(f"❌ Error deleting from Cloudinary: {str(e)}")
         return False
 
+# Create Blueprint with API prefix
 client_bp = Blueprint('client', __name__)
+
+# Add CORS headers to all responses
+@client_bp.after_request
+def add_cors_headers(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
 
 def get_admin_name(admin_id):
     """Get admin name from user ID"""
@@ -198,7 +208,7 @@ def send_email(to_email, subject, body):
         print(f"Email sending failed: {str(e)}")
         return False
 
-@client_bp.route('/api/clients', methods=['POST'])
+@client_bp.route('/clients', methods=['POST'])
 @jwt_required()
 def create_client():
     try:
@@ -269,7 +279,7 @@ def create_client():
         print(f"Error creating client: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@client_bp.route('/api/clients/test', methods=['GET'])
+@client_bp.route('/clients/test', methods=['GET'])
 def test_clients():
     """Test endpoint to check database without authentication"""
     try:
@@ -297,7 +307,7 @@ def test_clients():
             'error': str(e)
         }), 500
 
-@client_bp.route('/api/clients', methods=['GET'])
+@client_bp.route('/clients', methods=['GET'])
 @jwt_required()
 def get_clients():
     try:
@@ -414,7 +424,7 @@ def get_clients():
         traceback.print_exc()
         return jsonify({'error': str(e), 'clients': []}), 500
 
-@client_bp.route('/api/clients/<client_id>', methods=['GET'])
+@client_bp.route('/clients/<client_id>', methods=['GET'])
 @jwt_required()
 def get_client_details(client_id):
     try:
@@ -461,7 +471,7 @@ def get_client_details(client_id):
                         'file_name': file_name,
                         'file_size': file_size,
                         'file_path': file_path,
-                        'download_url': f'/api/clients/{client_id}/download/{doc_type}'
+                        'download_url': f'/clients/{client_id}/download/{doc_type}'
                     }
             client['processed_documents'] = processed_documents
         
@@ -470,7 +480,7 @@ def get_client_details(client_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@client_bp.route('/api/clients/<client_id>', methods=['PUT'])
+@client_bp.route('/clients/<client_id>', methods=['PUT'])
 @jwt_required()
 def update_client(client_id):
     try:
@@ -537,7 +547,7 @@ def update_client(client_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@client_bp.route('/api/clients/<client_id>/update', methods=['PUT'])
+@client_bp.route('/clients/<client_id>/update', methods=['PUT'])
 @jwt_required()
 def update_client_details(client_id):
     try:
@@ -694,7 +704,7 @@ def update_client_details(client_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@client_bp.route('/api/clients/<client_id>', methods=['DELETE'])
+@client_bp.route('/clients/<client_id>', methods=['DELETE'])
 @jwt_required()
 def delete_client(client_id):
     try:
@@ -773,7 +783,7 @@ def delete_client(client_id):
         print(f"Error deleting client {client_id}: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@client_bp.route('/api/clients/<client_id>/download/<document_type>')
+@client_bp.route('/clients/<client_id>/download/<document_type>')
 @jwt_required()
 def download_document(client_id, document_type):
     try:

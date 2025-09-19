@@ -34,12 +34,39 @@ print(f"JWT Expires: {app.config['JWT_ACCESS_TOKEN_EXPIRES']}")
 # Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Initialize extensions with enhanced CORS configuration
-CORS(app, 
-     origins=["http://localhost:4200", "http://localhost:4201", "https://tmis-business-guru.vercel.app"], 
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+# Initialize CORS with default settings
+cors = CORS()
+
+# Configure CORS
+cors.init_app(
+    app,
+    resources={
+        r"/*": {
+            "origins": [
+                "http://localhost:4200", 
+                "http://localhost:4201", 
+                "https://tmis-business-guru.vercel.app", 
+                "https://tmis-business-guru-frontend.vercel.app"
+            ],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
+            "allow_headers": [
+                "Content-Type", 
+                "Authorization", 
+                "X-Requested-With", 
+                "Access-Control-Allow-Origin",
+                "Access-Control-Allow-Headers",
+                "Access-Control-Allow-Methods",
+                "Access-Control-Allow-Credentials"
+            ],
+            "supports_credentials": True,
+            "expose_headers": [
+                "Content-Disposition",
+                "Access-Control-Allow-Origin",
+                "Access-Control-Allow-Credentials"
+            ]
+        }
+    }
+)
 jwt = JWTManager(app)
 
 # Health check endpoint (no JWT required)
