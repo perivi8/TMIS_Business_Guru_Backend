@@ -7,14 +7,6 @@ from enquiry_routes import enquiry_bp
 app.register_blueprint(client_bp, url_prefix='/api')
 app.register_blueprint(enquiry_bp, url_prefix='/api')
 
-# Add CORS headers to all responses
-@app.after_request
-def add_cors_headers(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
 
 if __name__ == '__main__':
     # Use environment variables for production deployment

@@ -100,7 +100,7 @@ def parse_date_safely(date_input):
         logger.error(f"Error parsing date {date_input}: {e}")
         return datetime.now()
 
-@enquiry_bp.route('/api/enquiries/test', methods=['GET'])
+@enquiry_bp.route('/enquiries/test', methods=['GET'])
 def test_connection():
     """Test endpoint to check database connectivity"""
     try:
@@ -126,7 +126,7 @@ def test_connection():
             'message': f'Database test failed: {str(e)}'
         }), 500
 
-@enquiry_bp.route('/api/enquiries', methods=['GET'])
+@enquiry_bp.route('/enquiries', methods=['GET'])
 @jwt_required()
 def get_all_enquiries():
     """Get all enquiries"""
@@ -147,7 +147,7 @@ def get_all_enquiries():
         logger.error(f"Error retrieving enquiries: {e}")
         return jsonify({'error': 'Failed to retrieve enquiries'}), 500
 
-@enquiry_bp.route('/api/enquiries/<enquiry_id>', methods=['GET'])
+@enquiry_bp.route('/enquiries/<enquiry_id>', methods=['GET'])
 @jwt_required()
 def get_enquiry_by_id(enquiry_id):
     """Get a specific enquiry by ID"""
@@ -171,7 +171,7 @@ def get_enquiry_by_id(enquiry_id):
         logger.error(f"Error retrieving enquiry {enquiry_id}: {e}")
         return jsonify({'error': 'Failed to retrieve enquiry'}), 500
 
-@enquiry_bp.route('/api/enquiries', methods=['POST'])
+@enquiry_bp.route('/enquiries', methods=['POST'])
 @jwt_required()
 def create_enquiry():
     """Create a new enquiry"""
@@ -300,7 +300,7 @@ def create_enquiry():
         logger.error(f"Error creating enquiry: {str(e)}", exc_info=True)
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
-@enquiry_bp.route('/api/enquiries/<enquiry_id>', methods=['PUT'])
+@enquiry_bp.route('/enquiries/<enquiry_id>', methods=['PUT'])
 @jwt_required()
 def update_enquiry(enquiry_id):
     """Update an existing enquiry"""
@@ -382,7 +382,7 @@ def update_enquiry(enquiry_id):
         logger.error(f"Error updating enquiry {enquiry_id}: {e}")
         return jsonify({'error': 'Failed to update enquiry'}), 500
 
-@enquiry_bp.route('/api/enquiries/<enquiry_id>', methods=['DELETE'])
+@enquiry_bp.route('/enquiries/<enquiry_id>', methods=['DELETE'])
 @jwt_required()
 def delete_enquiry(enquiry_id):
     """Delete an enquiry"""
@@ -412,7 +412,7 @@ def delete_enquiry(enquiry_id):
         logger.error(f"Error deleting enquiry {enquiry_id}: {e}")
         return jsonify({'error': 'Failed to delete enquiry'}), 500
 
-@enquiry_bp.route('/api/enquiries/stats', methods=['GET'])
+@enquiry_bp.route('/enquiries/stats', methods=['GET'])
 @jwt_required()
 def get_enquiry_stats():
     """Get enquiry statistics"""
