@@ -26,20 +26,33 @@ except Exception as e:
 
 # Register blueprints with URL prefixes
 if client_bp:
-    app.register_blueprint(client_bp, url_prefix='/api')
-    print("✅ client_bp registered with /api prefix")
+    try:
+        app.register_blueprint(client_bp, url_prefix='/api')
+        print("✅ client_bp registered with /api prefix")
+    except Exception as e:
+        print(f"❌ Failed to register client_bp: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
 else:
     print("❌ client_bp not registered - import failed")
 
 if enquiry_bp:
-    app.register_blueprint(enquiry_bp, url_prefix='/api')
-    print("✅ enquiry_bp registered with /api prefix")
+    try:
+        app.register_blueprint(enquiry_bp, url_prefix='/api')
+        print("✅ enquiry_bp registered with /api prefix")
+    except Exception as e:
+        print(f"❌ Failed to register enquiry_bp: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
 else:
     print("❌ enquiry_bp not registered - import failed")
 
 print(f"📋 Total registered blueprints: {len(app.blueprints)}")
 print(f"📋 Blueprint names: {list(app.blueprints.keys())}")
 
+# Additional check to verify route registration
+print("🔍 Verifying route registration...")
+for rule in app.url_map.iter_rules():
+    if str(rule).startswith('/api/clients'):
+        print(f"✅ Found route: {rule} (endpoint: {rule.endpoint})")
 
 if __name__ == '__main__':
     # Use environment variables for production deployment
