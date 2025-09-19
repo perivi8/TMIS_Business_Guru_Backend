@@ -38,6 +38,24 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 CORS(app, origins=["http://localhost:4200", "http://localhost:4201", "https://tmis-business-guru.vercel.app"], supports_credentials=True)
 jwt = JWTManager(app)
 
+# Health check endpoint (no JWT required)
+@app.route('/', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'healthy',
+        'message': 'TMIS Business Guru Backend is running',
+        'timestamp': datetime.utcnow().isoformat(),
+        'version': '1.0.0'
+    }), 200
+
+@app.route('/api/health', methods=['GET'])
+def api_health_check():
+    return jsonify({
+        'status': 'healthy',
+        'message': 'API is running',
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
 # JWT Error Handlers
 @jwt.expired_token_loader
 def expired_token_callback(jwt_header, jwt_payload):

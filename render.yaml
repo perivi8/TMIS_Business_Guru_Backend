@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: tmis-business-guru-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 main:app
+    envVars:
+      - key: MONGODB_URI
+        value: mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0
+      - key: JWT_SECRET_KEY
+        value: tmis-business-guru-secret-key-2024
+      - key: FLASK_ENV
+        value: production
+      - key: UPLOAD_FOLDER
+        value: uploads
+      - key: SMTP_EMAIL
+        value: perivihk@gmail.com
+      - key: SMTP_PASSWORD
+        value: pbjmpvmstqzrmkbb
+      - key: SMTP_SERVER
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: 587
+      - key: CLOUDINARY_ENABLED
+        value: true
+      - key: CLOUDINARY_CLOUD_NAME
+        value: dnwplyizd
+      - key: CLOUDINARY_API_KEY
+        value: 685119388195111
+      - key: CLOUDINARY_API_SECRET
+        value: WxzTmdK9bzyXrutVrrhw-AkLeps
