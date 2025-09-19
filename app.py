@@ -3,6 +3,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, get_jwt
 from werkzeug.utils import secure_filename
 import os
+import sys
 from dotenv import load_dotenv
 import smtplib
 from datetime import datetime, timedelta
@@ -87,6 +88,66 @@ def api_health_check():
         'timestamp': datetime.utcnow().isoformat()
     }), 200
 
+@app.route('/api/status', methods=['GET'])
+def comprehensive_status():
+    """Comprehensive status endpoint for debugging"""
+    try:
+        # Test database connection
+        db_status = "Unknown"
+        db_details = {}
+        
+        if db is not None:
+            try:
+                db.command("ping")
+                user_count = users_collection.count_documents({}) if users_collection else 0
+                client_count = clients_collection.count_documents({}) if clients_collection else 0
+                db_status = "Connected"
+                db_details = {
+                    "users": user_count,
+                    "clients": client_count,
+                    "database_name": db.name
+                }
+            except Exception as db_error:
+                db_status = f"Error: {str(db_error)}"
+        else:
+            db_status = "Not connected"
+        
+        # Check environment variables
+        env_vars = {
+            "MONGODB_URI": "Set" if os.getenv('MONGODB_URI') else "Missing",
+            "JWT_SECRET_KEY": "Set" if os.getenv('JWT_SECRET_KEY') else "Missing",
+            "FLASK_ENV": os.getenv('FLASK_ENV', 'Not set'),
+            "SMTP_EMAIL": "Set" if os.getenv('SMTP_EMAIL') else "Missing",
+            "UPLOAD_FOLDER": os.getenv('UPLOAD_FOLDER', 'Not set')
+        }
+        
+        return jsonify({
+            'status': 'healthy',
+            'message': 'Comprehensive status check',
+            'timestamp': datetime.utcnow().isoformat(),
+            'database': {
+                'status': db_status,
+                'details': db_details
+            },
+            'environment': env_vars,
+            'flask': {
+                'debug': app.debug,
+                'testing': app.testing,
+                'secret_key_set': bool(app.config.get('JWT_SECRET_KEY'))
+            },
+            'system': {
+                'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                'working_directory': os.getcwd()
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Status check failed: {str(e)}',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
 # Handle preflight OPTIONS requests
 @app.before_request
 def handle_preflight():
@@ -134,6 +195,19 @@ try:
     # Test connection
     db.command("ping")
     print("✅ MongoDB connection successful")
+    
+    # Initialize collections
+    users_collection = db.users
+    clients_collection = db.clients
+    
+    # Test collections access
+    try:
+        user_count = users_collection.count_documents({})
+        client_count = clients_collection.count_documents({})
+        print(f"📊 Database stats: {user_count} users, {client_count} clients")
+    except Exception as stats_error:
+        print(f"⚠️ Warning: Could not get collection stats: {stats_error}")
+        
 except Exception as e:
     print(f"❌ MongoDB connection failed: {str(e)}")
     print("🔍 Troubleshooting:")
@@ -141,15 +215,15 @@ except Exception as e:
     print("2. Verify MongoDB Atlas cluster is running")
     print("3. Check network connectivity and IP whitelist")
     print("4. Verify credentials in MongoDB URI")
-    raise Exception(f"Failed to connect to MongoDB: {str(e)}")
-
-# Collections
-if db is not None:
-    users_collection = db.users
-    clients_collection = db.clients
-else:
+    print("🔧 Setting database objects to None - app will use fallback behavior")
+    
+    # Don't raise exception, just set to None for graceful degradation
+    db = None
     users_collection = None
     clients_collection = None
+
+# Collections are already initialized in the try/except block above
+# This section is kept for compatibility but collections are already set
 
 # Allowed file extensions
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx'}

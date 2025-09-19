@@ -1,6 +1,8 @@
 import os
 import sys
 import traceback
+from datetime import datetime
+from flask import jsonify
 from app import app
 
 print("🔄 Importing blueprints...")
@@ -95,12 +97,57 @@ else:
     # Create emergency fallback route directly on app
     @app.route('/api/clients', methods=['GET'])
     def emergency_clients():
-        return jsonify({
-            'error': 'Client blueprint registration failed',
-            'clients': [],
-            'emergency_fallback': True,
-            'message': 'Please check server logs for import errors'
-        }), 500
+        try:
+            # Try to import and use the database connection from app.py
+            from app import db, clients_collection
+            
+            if db is None or clients_collection is None:
+                return jsonify({
+                    'error': 'Database connection not available',
+                    'clients': [],
+                    'emergency_fallback': True,
+                    'message': 'MongoDB connection failed - check environment variables'
+                }), 500
+            
+            # Try to get clients from database
+            try:
+                clients_cursor = clients_collection.find()
+                clients_list = []
+                
+                for client in clients_cursor:
+                    # Convert ObjectId to string
+                    client['_id'] = str(client['_id'])
+                    clients_list.append(client)
+                
+                return jsonify({
+                    'clients': clients_list,
+                    'emergency_fallback': True,
+                    'message': 'Emergency fallback route working - blueprint import failed',
+                    'count': len(clients_list)
+                }), 200
+                
+            except Exception as db_error:
+                return jsonify({
+                    'error': f'Database query failed: {str(db_error)}',
+                    'clients': [],
+                    'emergency_fallback': True,
+                    'message': 'Database connection exists but query failed'
+                }), 500
+                
+        except ImportError:
+            return jsonify({
+                'error': 'Cannot import database connection from app.py',
+                'clients': [],
+                'emergency_fallback': True,
+                'message': 'Complete database connection failure'
+            }), 500
+        except Exception as e:
+            return jsonify({
+                'error': f'Emergency fallback failed: {str(e)}',
+                'clients': [],
+                'emergency_fallback': True,
+                'message': 'Critical system error'
+            }), 500
 
 if enquiry_bp:
     try:
@@ -144,6 +191,84 @@ for endpoint in critical_endpoints:
     found = any(endpoint in route for route in api_routes_found)
     status = "✅" if found else "❌"
     print(f"{status} Critical endpoint {endpoint}: {'FOUND' if found else 'MISSING'}")
+
+# Add comprehensive test route for debugging
+@app.route('/api/test-routes', methods=['GET'])
+def test_routes():
+    """Comprehensive route testing endpoint"""
+    try:
+        from flask import current_app
+        
+        routes_info = []
+        for rule in current_app.url_map.iter_rules():
+            routes_info.append({
+                'endpoint': rule.endpoint,
+                'methods': list(rule.methods),
+                'rule': str(rule)
+            })
+        
+        # Test database connections
+        db_status = "Unknown"
+        try:
+            if 'client_routes' in sys.modules:
+                from client_routes import db, clients_collection
+                if db and clients_collection:
+                    db.command("ping")
+                    client_count = clients_collection.count_documents({})
+                    db_status = f"Connected - {client_count} clients"
+                else:
+                    db_status = "Database objects not available"
+            else:
+                db_status = "client_routes module not imported"
+        except Exception as e:
+            db_status = f"Database error: {str(e)}"
+        
+        # Check blueprint status
+        blueprint_status = {}
+        for bp_name in app.blueprints:
+            blueprint_status[bp_name] = "Registered"
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Route testing endpoint working',
+            'total_routes': len(routes_info),
+            'api_routes': [r for r in routes_info if r['rule'].startswith('/api/')],
+            'blueprint_status': blueprint_status,
+            'database_status': db_status,
+            'critical_endpoints': {
+                '/api/clients': any('/api/clients' in r['rule'] for r in routes_info),
+                '/api/enquiries': any('/api/enquiries' in r['rule'] for r in routes_info),
+                '/api/login': any('/api/login' in r['rule'] for r in routes_info),
+                '/api/register': any('/api/register' in r['rule'] for r in routes_info)
+            },
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Route testing failed: {str(e)}',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+# Add a simple clients test endpoint that doesn't require JWT
+@app.route('/api/clients/test', methods=['GET'])
+def test_clients_endpoint():
+    """Test clients endpoint without authentication"""
+    try:
+        return jsonify({
+            'status': 'success',
+            'message': 'Clients test endpoint is working',
+            'endpoint': '/api/clients/test',
+            'timestamp': datetime.utcnow().isoformat(),
+            'note': 'This confirms the /api/clients route structure is accessible'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Clients test endpoint failed: {str(e)}',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 if __name__ == '__main__':
     # Use environment variables for production deployment
