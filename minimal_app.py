@@ -21,15 +21,28 @@ app = Flask(__name__)
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'tmis-business-guru-secret-key-2024')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=24)
 
-# CORS configuration
+# CORS configuration with enhanced settings
 CORS(app, origins=[
     "http://localhost:4200",
     "http://localhost:4201", 
     "https://tmis-business-guru.vercel.app"
-], supports_credentials=True)
+], supports_credentials=True,
+allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
+methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 # JWT setup
 jwt = JWTManager(app)
+
+# Handle preflight OPTIONS requests
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = jsonify({'status': 'OK'})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization")
+        response.headers.add('Access-Control-Allow-Methods', "GET,PUT,POST,DELETE,OPTIONS")
+        response.headers.add('Access-Control-Allow-Credentials', "true")
+        return response
 
 # Routes
 @app.route('/', methods=['GET'])

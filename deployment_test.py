@@ -122,6 +122,56 @@ def test_app_creation():
         print(f"❌ Flask app creation failed: {str(e)}")
         return False
 
+def test_backend_deployment():
+    """Test the deployed backend endpoints"""
+    print("\n🔍 Testing Backend Deployment...")
+    
+    base_url = "https://tmis-business-guru-backend.onrender.com"
+    
+    try:
+        import requests
+        
+        # Test 1: Health check
+        try:
+            response = requests.get(f"{base_url}/", timeout=10)
+            print(f"✅ Health Check: {response.status_code}")
+            if response.status_code == 200:
+                data = response.json()
+                print(f"   Message: {data.get('message')}")
+        except Exception as e:
+            print(f"❌ Health Check Failed: {e}")
+            return False
+        
+        # Test 2: API Health
+        try:
+            response = requests.get(f"{base_url}/api/health", timeout=10)
+            print(f"✅ API Health: {response.status_code}")
+        except Exception as e:
+            print(f"❌ API Health Failed: {e}")
+            return False
+        
+        # Test 3: CORS preflight test
+        try:
+            headers = {
+                'Origin': 'https://tmis-business-guru.vercel.app',
+                'Access-Control-Request-Method': 'GET',
+                'Access-Control-Request-Headers': 'Authorization,Content-Type'
+            }
+            response = requests.options(f"{base_url}/api/clients", headers=headers, timeout=10)
+            print(f"✅ CORS Preflight: {response.status_code}")
+        except Exception as e:
+            print(f"❌ CORS Preflight Failed: {e}")
+        
+        print("✅ Backend deployment tests completed")
+        return True
+        
+    except ImportError:
+        print("❌ requests library not available for deployment testing")
+        return False
+    except Exception as e:
+        print(f"❌ Backend deployment test failed: {str(e)}")
+        return False
+
 def main():
     """Run all tests"""
     print("🚀 TMIS Business Guru Backend Deployment Test")
@@ -135,6 +185,7 @@ def main():
         ("Flask Dependencies", test_flask_imports),
         ("Flask App Creation", test_app_creation),
         ("MongoDB Connection", test_mongodb_connection),
+        ("Backend Deployment", test_backend_deployment),
     ]
     
     results = []
@@ -165,4 +216,5 @@ def main():
         return 1
 
 if __name__ == "__main__":
+    import requests
     sys.exit(main())

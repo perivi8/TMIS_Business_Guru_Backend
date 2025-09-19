@@ -34,8 +34,12 @@ print(f"JWT Expires: {app.config['JWT_ACCESS_TOKEN_EXPIRES']}")
 # Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Initialize extensions
-CORS(app, origins=["http://localhost:4200", "http://localhost:4201", "https://tmis-business-guru.vercel.app"], supports_credentials=True)
+# Initialize extensions with enhanced CORS configuration
+CORS(app, 
+     origins=["http://localhost:4200", "http://localhost:4201", "https://tmis-business-guru.vercel.app"], 
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 jwt = JWTManager(app)
 
 # Health check endpoint (no JWT required)
@@ -55,6 +59,17 @@ def api_health_check():
         'message': 'API is running',
         'timestamp': datetime.utcnow().isoformat()
     }), 200
+
+# Handle preflight OPTIONS requests
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = jsonify({'status': 'OK'})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization")
+        response.headers.add('Access-Control-Allow-Methods', "GET,PUT,POST,DELETE,OPTIONS")
+        response.headers.add('Access-Control-Allow-Credentials', "true")
+        return response
 
 # JWT Error Handlers
 @jwt.expired_token_loader
