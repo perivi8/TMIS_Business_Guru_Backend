@@ -138,6 +138,9 @@ def upload_to_cloudinary(file, client_id, doc_type):
         )
         
         print(f"📤 Document uploaded to Cloudinary: {doc_type} -> {result['public_id']}")
+        print(f"🔗 Cloudinary URL: {result['secure_url']}")
+        print(f"📊 File size: {result['bytes']} bytes, Format: {result['format']}")
+        
         return {
             'url': result['secure_url'],
             'public_id': result['public_id'],
@@ -152,23 +155,41 @@ def upload_to_cloudinary(file, client_id, doc_type):
         print(f"❌ Error uploading to Cloudinary: {str(e)}")
         raise
 
-def delete_from_cloudinary(public_id, resource_type="image"):
-    """Delete file from Cloudinary"""
+def delete_from_cloudinary(public_id, resource_type="auto"):
+    """Delete file from Cloudinary with enhanced resource type detection"""
     try:
         if not CLOUDINARY_AVAILABLE:
+            print(f"⚠️ Cloudinary library not available - cannot delete {public_id}")
             return False
         if not CLOUDINARY_ENABLED:
+            print(f"⚠️ Cloudinary not enabled - cannot delete {public_id}")
             return False
         
-        result = cloudinary.uploader.destroy(public_id, resource_type=resource_type)
-        success = result['result'] == 'ok'
+        print(f"🗑️ Attempting to delete from Cloudinary: {public_id}")
         
-        if success:
-            print(f"🗑️ Document deleted from Cloudinary: {public_id}")
-        else:
-            print(f"⚠️ Failed to delete from Cloudinary: {public_id} - {result}")
-            
-        return success
+        # Try different resource types if auto doesn't work
+        resource_types_to_try = ["auto", "image", "raw", "video"]
+        
+        for res_type in resource_types_to_try:
+            try:
+                result = cloudinary.uploader.destroy(public_id, resource_type=res_type)
+                
+                if result['result'] == 'ok':
+                    print(f"✅ Successfully deleted from Cloudinary: {public_id} (type: {res_type})")
+                    return True
+                elif result['result'] == 'not found':
+                    print(f"📄 File not found in Cloudinary: {public_id} (type: {res_type})")
+                    continue
+                else:
+                    print(f"⚠️ Unexpected result for {public_id} (type: {res_type}): {result}")
+                    continue
+                    
+            except Exception as type_error:
+                print(f"❌ Error with resource type {res_type} for {public_id}: {str(type_error)}")
+                continue
+        
+        print(f"❌ Failed to delete {public_id} with all resource types")
+        return False
         
     except Exception as e:
         print(f"❌ Error deleting from Cloudinary: {str(e)}")
@@ -237,32 +258,96 @@ def create_client():
     try:
         current_user_id = get_jwt_identity()
         
+        # Get current user information
+        current_user = None
+        if users_collection:
+            current_user = users_collection.find_one({'email': current_user_id})
+        
+        user_email = current_user.get('email', current_user_id) if current_user else current_user_id
+        is_tmis_user = user_email.startswith('tmis.') if user_email else False
+        
+        print(f"👤 User creating client: {user_email}")
+        print(f"🏢 Is TMIS user: {is_tmis_user}")
+        print(f"☁️ Cloudinary enabled: {CLOUDINARY_ENABLED}")
+        
         # Get form data
         data = request.form.to_dict()
         files = request.files
         
-        # Create uploads directory for this client
+        # Create uploads directory for this client (fallback only)
         client_id = str(ObjectId())
         upload_path = os.path.join(current_app.config['UPLOAD_FOLDER'], client_id)
-        os.makedirs(upload_path, exist_ok=True)
+        
+        # Only create local directory if Cloudinary is not available
+        if not CLOUDINARY_ENABLED:
+            os.makedirs(upload_path, exist_ok=True)
+            print(f"📁 Created local upload directory: {upload_path}")
+        else:
+            print(f"☁️ Using Cloudinary for document storage - no local directory needed")
         
         # Handle file uploads
         uploaded_files = {}
         
         # Process each uploaded file
+        print(f"📁 Processing {len(files)} files for client {client_id}")
         for field_name, file in files.items():
             if file and file.filename:
-                if CLOUDINARY_ENABLED:
+                print(f"📄 Processing file: {field_name} -> {file.filename}")
+                # Use Cloudinary for all users when enabled, with special priority for TMIS users
+                should_use_cloudinary = CLOUDINARY_ENABLED or (is_tmis_user and CLOUDINARY_AVAILABLE)
+                
+                if should_use_cloudinary:
                     try:
+                        if is_tmis_user:
+                            print(f"🏢 TMIS user detected - using Cloudinary for {file.filename}")
+                        else:
+                            print(f"👤 Regular user - using Cloudinary (enabled globally) for {file.filename}")
+                        
+                        print(f"☁️ Uploading {file.filename} to Cloudinary...")
                         uploaded_file = upload_to_cloudinary(file, client_id, field_name)
                         uploaded_files[field_name] = uploaded_file
+                        print(f"✅ Successfully uploaded {file.filename} to Cloudinary")
                     except Exception as e:
-                        print(f"Error uploading to Cloudinary: {str(e)}")
+                        print(f"❌ Error uploading {file.filename} to Cloudinary: {str(e)}")
+                        
+                        # For all users, try to retry Cloudinary upload once
+                        print(f"🔄 Retrying Cloudinary upload for {file.filename}")
+                        try:
+                            # Reset file pointer and try again
+                            file.seek(0)
+                            uploaded_file = upload_to_cloudinary(file, client_id, field_name)
+                            uploaded_files[field_name] = uploaded_file
+                            print(f"✅ Retry successful - uploaded {file.filename} to Cloudinary")
+                            continue
+                        except Exception as retry_error:
+                            print(f"❌ Retry failed for {file.filename}: {str(retry_error)}")
+                        
+                        # Fallback to local storage only if Cloudinary completely fails
+                        print(f"💾 Falling back to local storage for {file.filename}")
+                        os.makedirs(upload_path, exist_ok=True)
+                        filename = secure_filename(file.filename)
+                        file_path = os.path.join(upload_path, filename)
+                        file.save(file_path)
+                        uploaded_files[field_name] = {
+                            'url': file_path,
+                            'original_filename': file.filename,
+                            'storage_type': 'local',
+                            'created_at': datetime.utcnow().isoformat()
+                        }
+                        print(f"💾 Saved {file.filename} to local storage as fallback")
                 else:
+                    # Local storage only
+                    os.makedirs(upload_path, exist_ok=True)
                     filename = secure_filename(file.filename)
                     file_path = os.path.join(upload_path, filename)
                     file.save(file_path)
-                    uploaded_files[field_name] = file_path
+                    uploaded_files[field_name] = {
+                        'url': file_path,
+                        'original_filename': file.filename,
+                        'storage_type': 'local',
+                        'created_at': datetime.utcnow().isoformat()
+                    }
+                    print(f"💾 Saved {file.filename} to local storage (Cloudinary not available)")
         
         # Extract information from documents (only if DocumentProcessor is available)
         extracted_data = {}
@@ -304,31 +389,45 @@ def create_client():
 
 @client_bp.route('/clients/test', methods=['GET'])
 def test_clients():
-    """Test endpoint to check database without authentication"""
-    try:
-        # Check database connection
-        db_stats = db.command("dbstats")
-        collections = db.list_collection_names()
-        
-        # Count clients
-        client_count = clients_collection.count_documents({})
-        
-        # Get sample client if exists
-        sample_client = clients_collection.find_one()
-        
-        return jsonify({
-            'database_connected': True,
-            'collections': collections,
-            'client_count': client_count,
-            'sample_client_id': str(sample_client['_id']) if sample_client else None,
-            'sample_client_keys': list(sample_client.keys()) if sample_client else None
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'database_connected': False,
-            'error': str(e)
-        }), 500
+    return jsonify({
+        'message': 'Client routes are working',
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
+@client_bp.route('/clients/cloudinary-status', methods=['GET'])
+@jwt_required()
+def cloudinary_status():
+    """Debug endpoint to check Cloudinary configuration"""
+    current_user_id = get_jwt_identity()
+    
+    # Get current user information
+    current_user = None
+    if users_collection:
+        current_user = users_collection.find_one({'email': current_user_id})
+    
+    user_email = current_user.get('email', current_user_id) if current_user else current_user_id
+    is_tmis_user = user_email.startswith('tmis.') if user_email else False
+    
+    return jsonify({
+        'user_email': user_email,
+        'is_tmis_user': is_tmis_user,
+        'cloudinary_available': CLOUDINARY_AVAILABLE,
+        'cloudinary_enabled': CLOUDINARY_ENABLED,
+        'cloudinary_cloud_name': CLOUDINARY_CLOUD_NAME if CLOUDINARY_ENABLED else 'Not configured',
+        'should_use_cloudinary': CLOUDINARY_ENABLED or (is_tmis_user and CLOUDINARY_AVAILABLE),
+        'environment_variables': {
+            'CLOUDINARY_ENABLED': os.getenv('CLOUDINARY_ENABLED'),
+            'CLOUDINARY_CLOUD_NAME': os.getenv('CLOUDINARY_CLOUD_NAME'),
+            'CLOUDINARY_API_KEY': os.getenv('CLOUDINARY_API_KEY')[:10] + '...' if os.getenv('CLOUDINARY_API_KEY') else None,
+            'CLOUDINARY_API_SECRET': 'Set' if os.getenv('CLOUDINARY_API_SECRET') else 'Not set'
+        },
+        'upload_logic': {
+            'all_users_use_cloudinary_when_enabled': True,
+            'tmis_users_get_priority_even_if_disabled': True,
+            'fallback_to_local_on_cloudinary_failure': True
+        },
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
 
 @client_bp.route('/clients', methods=['GET'])
 @jwt_required()
@@ -581,6 +680,18 @@ def update_client_details(client_id):
         user_role = claims.get('role')
         current_user_id = claims.get('sub')
         
+        # Get current user information
+        current_user = None
+        if users_collection:
+            current_user = users_collection.find_one({'email': current_user_id})
+        
+        user_email = current_user.get('email', current_user_id) if current_user else current_user_id
+        is_tmis_user = user_email.startswith('tmis.') if user_email else False
+        
+        print(f"👤 User updating client: {user_email}")
+        print(f"🏢 Is TMIS user: {is_tmis_user}")
+        print(f"☁️ Cloudinary enabled: {CLOUDINARY_ENABLED}")
+        
         # Find the client
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
         
@@ -645,19 +756,64 @@ def update_client_details(client_id):
             # Handle file uploads
             documents = client.get('documents', {})
             
+            print(f"📁 Processing {len(files)} files for client update {client_id}")
             for key, file in files.items():
                 if file and file.filename:
-                    if CLOUDINARY_ENABLED:
+                    print(f"📄 Processing file: {key} -> {file.filename}")
+                    
+                    # Use Cloudinary for all users when enabled, with special priority for TMIS users
+                    should_use_cloudinary = CLOUDINARY_ENABLED or (is_tmis_user and CLOUDINARY_AVAILABLE)
+                    
+                    if should_use_cloudinary:
                         try:
+                            if is_tmis_user:
+                                print(f"🏢 TMIS user detected - using Cloudinary for {file.filename}")
+                            else:
+                                print(f"👤 Regular user - using Cloudinary (enabled globally) for {file.filename}")
+                            
+                            print(f"☁️ Uploading {file.filename} to Cloudinary...")
                             uploaded_file = upload_to_cloudinary(file, client_id, key)
                             documents[key] = uploaded_file
+                            print(f"✅ Successfully uploaded {file.filename} to Cloudinary")
                         except Exception as e:
-                            print(f"Error uploading to Cloudinary: {str(e)}")
+                            print(f"❌ Error uploading {file.filename} to Cloudinary: {str(e)}")
+                            
+                            # For all users, try to retry Cloudinary upload once
+                            print(f"🔄 Retrying Cloudinary upload for {file.filename}")
+                            try:
+                                # Reset file pointer and try again
+                                file.seek(0)
+                                uploaded_file = upload_to_cloudinary(file, client_id, key)
+                                documents[key] = uploaded_file
+                                print(f"✅ Retry successful - uploaded {file.filename} to Cloudinary")
+                                continue
+                            except Exception as retry_error:
+                                print(f"❌ Retry failed for {file.filename}: {str(retry_error)}")
+                            
+                            # Fallback to local storage only if Cloudinary completely fails
+                            print(f"💾 Falling back to local storage for {file.filename}")
+                            filename = secure_filename(file.filename)
+                            file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], f"{client_id}_{filename}")
+                            file.save(file_path)
+                            documents[key] = {
+                                'url': file_path,
+                                'original_filename': file.filename,
+                                'storage_type': 'local',
+                                'created_at': datetime.utcnow().isoformat()
+                            }
+                            print(f"💾 Saved {file.filename} to local storage as fallback")
                     else:
+                        # Local storage only
                         filename = secure_filename(file.filename)
                         file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], f"{client_id}_{filename}")
                         file.save(file_path)
-                        documents[key] = file_path
+                        documents[key] = {
+                            'url': file_path,
+                            'original_filename': file.filename,
+                            'storage_type': 'local',
+                            'created_at': datetime.utcnow().isoformat()
+                        }
+                        print(f"💾 Saved {file.filename} to local storage (Cloudinary not available)")
             
             if documents:
                 update_data['documents'] = documents
@@ -749,29 +905,65 @@ def delete_client(client_id):
         if user_role != 'admin' and client.get('created_by') != current_user_id:
             return jsonify({'error': 'Unauthorized'}), 403
         
-        # Delete all associated documents from file system
+        # Delete all associated documents from file system and Cloudinary
         documents_deleted = 0
         documents_failed = 0
+        cloudinary_deleted = 0
+        local_deleted = 0
         
         if 'documents' in client and client['documents']:
-            print(f"Deleting documents for client {client_id}...")
+            print(f"🗑️ Deleting {len(client['documents'])} documents for client {client_id}...")
             
-            for doc_type, file_path in client['documents'].items():
-                if isinstance(file_path, dict) and file_path.get('storage_type') == 'cloudinary':
-                    if delete_from_cloudinary(file_path['public_id']):
-                        documents_deleted += 1
-                        print(f"Successfully deleted document from Cloudinary: {doc_type} -> {file_path['public_id']}")
+            for doc_type, file_info in client['documents'].items():
+                print(f"📄 Processing document: {doc_type}")
+                
+                # Handle new format (dict with metadata)
+                if isinstance(file_info, dict):
+                    if file_info.get('storage_type') == 'cloudinary' and file_info.get('public_id'):
+                        print(f"☁️ Deleting Cloudinary document: {doc_type} -> {file_info['public_id']}")
+                        if delete_from_cloudinary(file_info['public_id']):
+                            documents_deleted += 1
+                            cloudinary_deleted += 1
+                            print(f"✅ Successfully deleted Cloudinary document: {doc_type}")
+                        else:
+                            documents_failed += 1
+                            print(f"❌ Failed to delete Cloudinary document: {doc_type}")
+                    elif file_info.get('storage_type') == 'local' and file_info.get('url'):
+                        local_path = file_info['url']
+                        if os.path.exists(local_path):
+                            try:
+                                os.remove(local_path)
+                                documents_deleted += 1
+                                local_deleted += 1
+                                print(f"✅ Successfully deleted local document: {doc_type} -> {local_path}")
+                            except Exception as e:
+                                documents_failed += 1
+                                print(f"❌ Failed to delete local document {doc_type} ({local_path}): {str(e)}")
+                        else:
+                            print(f"⚠️ Local file not found: {local_path}")
+                
+                # Handle old format (direct file path string)
+                elif isinstance(file_info, str):
+                    if os.path.exists(file_info):
+                        try:
+                            os.remove(file_info)
+                            documents_deleted += 1
+                            local_deleted += 1
+                            print(f"✅ Successfully deleted legacy document: {doc_type} -> {file_info}")
+                        except Exception as e:
+                            documents_failed += 1
+                            print(f"❌ Failed to delete legacy document {doc_type} ({file_info}): {str(e)}")
                     else:
-                        documents_failed += 1
-                        print(f"Failed to delete document from Cloudinary: {doc_type} -> {file_path['public_id']}")
-                elif os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                        documents_deleted += 1
-                        print(f"Successfully deleted document: {doc_type} -> {file_path}")
-                    except Exception as e:
-                        documents_failed += 1
-                        print(f"Failed to delete document {doc_type} ({file_path}): {str(e)}")
+                        print(f"⚠️ Legacy file not found: {file_info}")
+                
+                else:
+                    print(f"⚠️ Unknown document format for {doc_type}: {type(file_info)}")
+            
+            print(f"📊 Document deletion summary:")
+            print(f"   ☁️ Cloudinary documents deleted: {cloudinary_deleted}")
+            print(f"   💾 Local documents deleted: {local_deleted}")
+            print(f"   ❌ Failed deletions: {documents_failed}")
+            print(f"   ✅ Total successful: {documents_deleted}")
         
         # Try to delete the client's upload directory if it exists
         try:
@@ -801,9 +993,15 @@ def delete_client(client_id):
         
         return jsonify({
             'message': 'Client and all associated documents deleted successfully',
+            'client_id': client_id,
             'client_name': client_name,
-            'documents_deleted': documents_deleted,
-            'documents_failed': documents_failed
+            'deletion_summary': {
+                'total_documents_deleted': documents_deleted,
+                'cloudinary_documents_deleted': cloudinary_deleted,
+                'local_documents_deleted': local_deleted,
+                'failed_deletions': documents_failed,
+                'database_record_deleted': True
+            }
         }), 200
         
     except Exception as e:

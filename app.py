@@ -39,32 +39,55 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 cors = CORS()
 
 # Configure CORS
+# Get allowed origins from environment or use defaults
+allowed_origins = [
+    "http://localhost:4200", 
+    "http://localhost:4201", 
+    "https://tmis-business-guru.vercel.app",
+    "https://tmis-business-guru-frontend.vercel.app"
+]
+
+# Add any additional origins from environment variable
+additional_origins = os.getenv('ADDITIONAL_CORS_ORIGINS', '')
+if additional_origins:
+    allowed_origins.extend(additional_origins.split(','))
+
+# For production debugging, temporarily allow all Vercel domains
+flask_env = os.getenv('FLASK_ENV', 'development')
+if flask_env == 'production':
+    # Add common Vercel domain patterns for debugging
+    vercel_domains = [
+        "https://tmis-business-guru-git-main-perivihks-projects.vercel.app",
+        "https://tmis-business-guru-perivihks-projects.vercel.app"
+    ]
+    allowed_origins.extend(vercel_domains)
+
+print(f"🌐 CORS Allowed Origins: {allowed_origins}")
+print(f"🔧 Flask Environment: {flask_env}")
+
+# Configure CORS with comprehensive settings
 cors.init_app(
     app,
     resources={
         r"/*": {
-            "origins": [
-                "http://localhost:4200", 
-                "http://localhost:4201", 
-                "https://tmis-business-guru.vercel.app", 
-                "https://tmis-business-guru-frontend.vercel.app"
-            ],
+            "origins": allowed_origins,
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
             "allow_headers": [
                 "Content-Type", 
                 "Authorization", 
-                "X-Requested-With", 
-                "Access-Control-Allow-Origin",
-                "Access-Control-Allow-Headers",
-                "Access-Control-Allow-Methods",
-                "Access-Control-Allow-Credentials"
+                "X-Requested-With",
+                "Accept",
+                "Origin",
+                "Cache-Control"
             ],
             "supports_credentials": True,
             "expose_headers": [
                 "Content-Disposition",
-                "Access-Control-Allow-Origin",
-                "Access-Control-Allow-Credentials"
-            ]
+                "Authorization"
+            ],
+            "send_wildcard": False,
+            "always_send": True,
+            "automatic_options": True
         }
     }
 )
@@ -147,6 +170,20 @@ def comprehensive_status():
             'message': f'Status check failed: {str(e)}',
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
+@app.route('/api/cors-debug', methods=['GET', 'OPTIONS'])
+def cors_debug():
+    """Debug endpoint to check CORS configuration"""
+    origin = request.headers.get('Origin', 'No Origin Header')
+    
+    return jsonify({
+        'message': 'CORS Debug Endpoint',
+        'request_origin': origin,
+        'allowed_origins': allowed_origins,
+        'request_headers': dict(request.headers),
+        'cors_configured': True,
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
 
 # Handle preflight OPTIONS requests
 @app.before_request
