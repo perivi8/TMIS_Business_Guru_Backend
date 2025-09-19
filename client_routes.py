@@ -8,7 +8,18 @@ from bson.json_util import dumps
 import json
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from email_service import email_service
+import traceback
+
+# Try to import email_service, but make it optional
+try:
+    from email_service import email_service
+    EMAIL_SERVICE_AVAILABLE = True
+    print("✅ email_service imported successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: email_service not available: {e}")
+    print(f"Traceback: {traceback.format_exc()}")
+    EMAIL_SERVICE_AVAILABLE = False
+    email_service = None
 
 # Try to import cloudinary, but make it optional
 try:
@@ -16,8 +27,9 @@ try:
     import cloudinary.uploader
     import cloudinary.api
     CLOUDINARY_AVAILABLE = True
-except ImportError:
-    print("Warning: Cloudinary not available. File uploads will use local storage only.")
+    print("✅ Cloudinary imported successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: Cloudinary not available: {e}")
     CLOUDINARY_AVAILABLE = False
     cloudinary = None
 
@@ -25,8 +37,10 @@ except ImportError:
 try:
     from document_processor import DocumentProcessor
     DOCUMENT_PROCESSOR_AVAILABLE = True
-except ImportError:
-    print("Warning: DocumentProcessor not available. Document processing will be skipped.")
+    print("✅ DocumentProcessor imported successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: DocumentProcessor not available: {e}")
+    print(f"Traceback: {traceback.format_exc()}")
     DOCUMENT_PROCESSOR_AVAILABLE = False
     DocumentProcessor = None
 
@@ -527,17 +541,20 @@ def update_client(client_id):
             print(f"Client company_email: {client.get('company_email', 'None')}")
             
             # Send email notification to all relevant parties
-            email_sent = email_service.send_client_update_notification(
-                client_data=client,
-                admin_name=admin_name,
-                tmis_users=tmis_users,
-                update_type="status updated"
-            )
-            
-            if email_sent:
-                print("Email notification sent successfully")
+            if EMAIL_SERVICE_AVAILABLE and email_service:
+                email_sent = email_service.send_client_update_notification(
+                    client_data=client,
+                    admin_name=admin_name,
+                    tmis_users=tmis_users,
+                    update_type="status updated"
+                )
+                
+                if email_sent:
+                    print("Email notification sent successfully")
+                else:
+                    print("Failed to send email notification")
             else:
-                print("Failed to send email notification")
+                print("Email service not available - skipping notification")
                 
         except Exception as e:
             print(f"Error sending email notification: {str(e)}")
@@ -692,12 +709,13 @@ def update_client_details(client_id):
             tmis_users = get_tmis_users()
             
             # Send email notification to all relevant parties
-            email_service.send_client_update_notification(
-                client_data=updated_client,
-                admin_name=admin_name,
-                tmis_users=tmis_users,
-                update_type="updated"
-            )
+            if EMAIL_SERVICE_AVAILABLE and email_service:
+                email_service.send_client_update_notification(
+                    client_data=updated_client,
+                    admin_name=admin_name,
+                    tmis_users=tmis_users,
+                    update_type="updated"
+                )
         
         return jsonify({'message': 'Client updated successfully'}), 200
         

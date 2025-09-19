@@ -1,12 +1,19 @@
 import os
+import sys
+import traceback
 from app import app
 
 print("🔄 Importing blueprints...")
+print(f"Python version: {sys.version}")
+print(f"Current working directory: {os.getcwd()}")
+print(f"Python path: {sys.path}")
+
 try:
     from client_routes import client_bp
     print("✅ client_bp imported successfully")
 except Exception as e:
     print(f"❌ Failed to import client_bp: {e}")
+    print(f"Traceback: {traceback.format_exc()}")
     client_bp = None
 
 try:
@@ -14,6 +21,7 @@ try:
     print("✅ enquiry_bp imported successfully")
 except Exception as e:
     print(f"❌ Failed to import enquiry_bp: {e}")
+    print(f"Traceback: {traceback.format_exc()}")
     enquiry_bp = None
 
 # Register blueprints with URL prefixes
