@@ -91,12 +91,9 @@ def api_health_check():
 @app.before_request
 def handle_preflight():
     if request.method == "OPTIONS":
-        response = jsonify({'status': 'OK'})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization")
-        response.headers.add('Access-Control-Allow-Methods', "GET,PUT,POST,DELETE,OPTIONS")
-        response.headers.add('Access-Control-Allow-Credentials', "true")
-        return response
+        # Let Flask-CORS handle the OPTIONS request
+        # Don't add any manual headers here as it causes duplicates
+        return '', 200
 
 # JWT Error Handlers
 @jwt.expired_token_loader
