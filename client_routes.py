@@ -9,9 +9,17 @@ import json
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from email_service import email_service
-import cloudinary
-import cloudinary.uploader
-import cloudinary.api
+
+# Try to import cloudinary, but make it optional
+try:
+    import cloudinary
+    import cloudinary.uploader
+    import cloudinary.api
+    CLOUDINARY_AVAILABLE = True
+except ImportError:
+    print("Warning: Cloudinary not available. File uploads will use local storage only.")
+    CLOUDINARY_AVAILABLE = False
+    cloudinary = None
 
 # Try to import DocumentProcessor, but make it optional
 try:
@@ -31,8 +39,8 @@ CLOUDINARY_CLOUD_NAME = os.getenv('CLOUDINARY_CLOUD_NAME')
 CLOUDINARY_API_KEY = os.getenv('CLOUDINARY_API_KEY')
 CLOUDINARY_API_SECRET = os.getenv('CLOUDINARY_API_SECRET')
 
-# Initialize Cloudinary if enabled
-if CLOUDINARY_ENABLED and CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
+# Initialize Cloudinary if enabled and available
+if CLOUDINARY_AVAILABLE and CLOUDINARY_ENABLED and CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
     try:
         cloudinary.config(
             cloud_name=CLOUDINARY_CLOUD_NAME,
@@ -45,7 +53,10 @@ if CLOUDINARY_ENABLED and CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUD
         print(f"❌ Failed to initialize Cloudinary: {str(e)}")
         CLOUDINARY_ENABLED = False
 else:
-    print("⚠️ Cloudinary credentials not found or incomplete")
+    if not CLOUDINARY_AVAILABLE:
+        print("⚠️ Cloudinary library not available")
+    else:
+        print("⚠️ Cloudinary credentials not found or incomplete")
     CLOUDINARY_ENABLED = False
 
 # MongoDB connection for this module with error handling
@@ -71,6 +82,8 @@ except Exception as e:
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""
     try:
+        if not CLOUDINARY_AVAILABLE:
+            raise Exception("Cloudinary library not available")
         if not CLOUDINARY_ENABLED:
             raise Exception("Cloudinary not configured")
         
@@ -109,9 +122,11 @@ def upload_to_cloudinary(file, client_id, doc_type):
         print(f"❌ Error uploading to Cloudinary: {str(e)}")
         raise
 
-def delete_from_cloudinary(public_id, resource_type="auto"):
+def delete_from_cloudinary(public_id, resource_type="image"):
     """Delete file from Cloudinary"""
     try:
+        if not CLOUDINARY_AVAILABLE:
+            return False
         if not CLOUDINARY_ENABLED:
             return False
         
