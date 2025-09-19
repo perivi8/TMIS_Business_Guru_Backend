@@ -52,7 +52,8 @@ else:
 MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
     print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found in client_routes!")
-    raise Exception("MONGODB_URI environment variable is required")
+    print("🔧 Using fallback MongoDB URI for this deployment...")
+    MONGODB_URI = "mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0"
 
 print(f"🔄 Client routes connecting to MongoDB...")
 try:

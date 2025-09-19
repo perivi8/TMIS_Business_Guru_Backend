@@ -63,9 +63,10 @@ def revoked_token_callback(jwt_header, jwt_payload):
 MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
     print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found!")
-    print("Please set MONGODB_URI in your environment variables or .env file")
-    print("Example: MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/database_name")
-    raise Exception("MONGODB_URI environment variable is required")
+    print("Please set MONGODB_URI in your Render dashboard:")
+    print("MONGODB_URI=mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0")
+    print("🔧 Using fallback MongoDB URI for this deployment...")
+    MONGODB_URI = "mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0"
 
 print(f"🔄 Connecting to MongoDB...")
 print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
