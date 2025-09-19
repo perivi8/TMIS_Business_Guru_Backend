@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from werkzeug.utils import secure_filename
 import os
+import sys
 from datetime import datetime
 from bson import ObjectId
 from bson.json_util import dumps
@@ -200,6 +201,52 @@ client_bp = Blueprint('client', __name__)
 
 # CORS headers are handled by Flask-CORS in app.py - no need for manual headers here
 
+def check_database_connection():
+    """Check if database connection is available and working"""
+    if db is None or clients_collection is None or users_collection is None:
+        return False, "Database connection not available"
+    
+    try:
+        db.command("ping")
+        return True, "Database connection successful"
+    except Exception as e:
+        return False, f"Database ping failed: {str(e)}"
+
+def get_database_status():
+    """Get comprehensive database status for debugging"""
+    try:
+        if db is None:
+            return {
+                'status': 'disconnected',
+                'message': 'Database object is None',
+                'collections_available': False
+            }
+        
+        # Test connection
+        db.command("ping")
+        
+        # Get collection stats
+        collections = db.list_collection_names()
+        client_count = clients_collection.count_documents({}) if clients_collection else 0
+        user_count = users_collection.count_documents({}) if users_collection else 0
+        
+        return {
+            'status': 'connected',
+            'message': 'Database connection successful',
+            'collections_available': True,
+            'collections': collections,
+            'stats': {
+                'clients': client_count,
+                'users': user_count
+            }
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Database error: {str(e)}',
+            'collections_available': False
+        }
+
 def get_admin_name(admin_id):
     """Get admin name from user ID"""
     try:
@@ -274,80 +321,54 @@ def create_client():
         data = request.form.to_dict()
         files = request.files
         
-        # Create uploads directory for this client (fallback only)
+        # Generate client ID for document organization
         client_id = str(ObjectId())
-        upload_path = os.path.join(current_app.config['UPLOAD_FOLDER'], client_id)
         
-        # Only create local directory if Cloudinary is not available
-        if not CLOUDINARY_ENABLED:
-            os.makedirs(upload_path, exist_ok=True)
-            print(f"📁 Created local upload directory: {upload_path}")
-        else:
-            print(f"☁️ Using Cloudinary for document storage - no local directory needed")
-        
-        # Handle file uploads
+        # Handle file uploads - CLOUDINARY ONLY (no local storage)
         uploaded_files = {}
         
-        # Process each uploaded file
+        # Check if Cloudinary is available
+        if not CLOUDINARY_AVAILABLE or not CLOUDINARY_ENABLED:
+            return jsonify({
+                'error': 'Document upload service unavailable. Cloudinary is required for document storage.',
+                'details': 'Please contact administrator to enable Cloudinary service.'
+            }), 503
+        
+        print(f"☁️ Using Cloudinary ONLY for document storage - no local files")
         print(f"📁 Processing {len(files)} files for client {client_id}")
+        
         for field_name, file in files.items():
             if file and file.filename:
                 print(f"📄 Processing file: {field_name} -> {file.filename}")
-                # Use Cloudinary for all users when enabled, with special priority for TMIS users
-                should_use_cloudinary = CLOUDINARY_ENABLED or (is_tmis_user and CLOUDINARY_AVAILABLE)
                 
-                if should_use_cloudinary:
+                try:
+                    if is_tmis_user:
+                        print(f"🏢 TMIS user - uploading {file.filename} to Cloudinary")
+                    else:
+                        print(f"👤 Regular user - uploading {file.filename} to Cloudinary")
+                    
+                    print(f"☁️ Uploading {file.filename} to Cloudinary...")
+                    uploaded_file = upload_to_cloudinary(file, client_id, field_name)
+                    uploaded_files[field_name] = uploaded_file
+                    print(f"✅ Successfully uploaded {file.filename} to Cloudinary")
+                    
+                except Exception as e:
+                    print(f"❌ Error uploading {file.filename} to Cloudinary: {str(e)}")
+                    
+                    # Retry once for all users
+                    print(f"🔄 Retrying Cloudinary upload for {file.filename}")
                     try:
-                        if is_tmis_user:
-                            print(f"🏢 TMIS user detected - using Cloudinary for {file.filename}")
-                        else:
-                            print(f"👤 Regular user - using Cloudinary (enabled globally) for {file.filename}")
-                        
-                        print(f"☁️ Uploading {file.filename} to Cloudinary...")
+                        # Reset file pointer and try again
+                        file.seek(0)
                         uploaded_file = upload_to_cloudinary(file, client_id, field_name)
                         uploaded_files[field_name] = uploaded_file
-                        print(f"✅ Successfully uploaded {file.filename} to Cloudinary")
-                    except Exception as e:
-                        print(f"❌ Error uploading {file.filename} to Cloudinary: {str(e)}")
-                        
-                        # For all users, try to retry Cloudinary upload once
-                        print(f"🔄 Retrying Cloudinary upload for {file.filename}")
-                        try:
-                            # Reset file pointer and try again
-                            file.seek(0)
-                            uploaded_file = upload_to_cloudinary(file, client_id, field_name)
-                            uploaded_files[field_name] = uploaded_file
-                            print(f"✅ Retry successful - uploaded {file.filename} to Cloudinary")
-                            continue
-                        except Exception as retry_error:
-                            print(f"❌ Retry failed for {file.filename}: {str(retry_error)}")
-                        
-                        # Fallback to local storage only if Cloudinary completely fails
-                        print(f"💾 Falling back to local storage for {file.filename}")
-                        os.makedirs(upload_path, exist_ok=True)
-                        filename = secure_filename(file.filename)
-                        file_path = os.path.join(upload_path, filename)
-                        file.save(file_path)
-                        uploaded_files[field_name] = {
-                            'url': file_path,
-                            'original_filename': file.filename,
-                            'storage_type': 'local',
-                            'created_at': datetime.utcnow().isoformat()
-                        }
-                        print(f"💾 Saved {file.filename} to local storage as fallback")
-                else:
-                    # Local storage only
-                    os.makedirs(upload_path, exist_ok=True)
-                    filename = secure_filename(file.filename)
-                    file_path = os.path.join(upload_path, filename)
-                    file.save(file_path)
-                    uploaded_files[field_name] = {
-                        'url': file_path,
-                        'original_filename': file.filename,
-                        'storage_type': 'local',
-                        'created_at': datetime.utcnow().isoformat()
-                    }
-                    print(f"💾 Saved {file.filename} to local storage (Cloudinary not available)")
+                        print(f"✅ Retry successful - uploaded {file.filename} to Cloudinary")
+                    except Exception as retry_error:
+                        print(f"❌ Retry failed for {file.filename}: {str(retry_error)}")
+                        return jsonify({
+                            'error': f'Failed to upload document: {file.filename}',
+                            'details': 'Cloudinary upload failed after retry. Please try again later.'
+                        }), 500
         
         # Extract information from documents (only if DocumentProcessor is available)
         extracted_data = {}
@@ -428,6 +449,50 @@ def cloudinary_status():
         },
         'timestamp': datetime.utcnow().isoformat()
     }), 200
+
+@client_bp.route('/clients/production-debug', methods=['GET'])
+def production_debug():
+    """Production debug endpoint - no JWT required for troubleshooting"""
+    try:
+        # Get database status
+        db_status = get_database_status()
+        
+        # Get environment info
+        env_info = {
+            'FLASK_ENV': os.getenv('FLASK_ENV', 'Not set'),
+            'MONGODB_URI': 'Set' if os.getenv('MONGODB_URI') else 'Not set',
+            'JWT_SECRET_KEY': 'Set' if os.getenv('JWT_SECRET_KEY') else 'Not set',
+            'CLOUDINARY_ENABLED': os.getenv('CLOUDINARY_ENABLED', 'Not set'),
+            'SMTP_EMAIL': 'Set' if os.getenv('SMTP_EMAIL') else 'Not set'
+        }
+        
+        # Get system info
+        system_info = {
+            'working_directory': os.getcwd(),
+            'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            'files_in_directory': [f for f in os.listdir('.') if f.endswith('.py')][:10]  # First 10 Python files
+        }
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Production debug endpoint working',
+            'timestamp': datetime.utcnow().isoformat(),
+            'database': db_status,
+            'environment': env_info,
+            'system': system_info,
+            'blueprint_info': {
+                'name': client_bp.name,
+                'url_prefix': getattr(client_bp, 'url_prefix', 'None'),
+                'routes_count': len(client_bp.deferred_functions)
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Production debug failed: {str(e)}',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 @client_bp.route('/clients', methods=['GET'])
 @jwt_required()
@@ -753,67 +818,51 @@ def update_client_details(client_id):
                     except ValueError:
                         pass
             
-            # Handle file uploads
+            # Handle file uploads - CLOUDINARY ONLY (no local storage)
             documents = client.get('documents', {})
             
+            # Check if Cloudinary is available for file uploads
+            if files and (not CLOUDINARY_AVAILABLE or not CLOUDINARY_ENABLED):
+                return jsonify({
+                    'error': 'Document upload service unavailable. Cloudinary is required for document storage.',
+                    'details': 'Please contact administrator to enable Cloudinary service.'
+                }), 503
+            
+            print(f"☁️ Using Cloudinary ONLY for document storage - no local files")
             print(f"📁 Processing {len(files)} files for client update {client_id}")
+            
             for key, file in files.items():
                 if file and file.filename:
                     print(f"📄 Processing file: {key} -> {file.filename}")
                     
-                    # Use Cloudinary for all users when enabled, with special priority for TMIS users
-                    should_use_cloudinary = CLOUDINARY_ENABLED or (is_tmis_user and CLOUDINARY_AVAILABLE)
-                    
-                    if should_use_cloudinary:
+                    try:
+                        if is_tmis_user:
+                            print(f"🏢 TMIS user - uploading {file.filename} to Cloudinary")
+                        else:
+                            print(f"👤 Regular user - uploading {file.filename} to Cloudinary")
+                        
+                        print(f"☁️ Uploading {file.filename} to Cloudinary...")
+                        uploaded_file = upload_to_cloudinary(file, client_id, key)
+                        documents[key] = uploaded_file
+                        print(f"✅ Successfully uploaded {file.filename} to Cloudinary")
+                        
+                    except Exception as e:
+                        print(f"❌ Error uploading {file.filename} to Cloudinary: {str(e)}")
+                        
+                        # Retry once for all users
+                        print(f"🔄 Retrying Cloudinary upload for {file.filename}")
                         try:
-                            if is_tmis_user:
-                                print(f"🏢 TMIS user detected - using Cloudinary for {file.filename}")
-                            else:
-                                print(f"👤 Regular user - using Cloudinary (enabled globally) for {file.filename}")
-                            
-                            print(f"☁️ Uploading {file.filename} to Cloudinary...")
+                            # Reset file pointer and try again
+                            file.seek(0)
                             uploaded_file = upload_to_cloudinary(file, client_id, key)
                             documents[key] = uploaded_file
-                            print(f"✅ Successfully uploaded {file.filename} to Cloudinary")
-                        except Exception as e:
-                            print(f"❌ Error uploading {file.filename} to Cloudinary: {str(e)}")
-                            
-                            # For all users, try to retry Cloudinary upload once
-                            print(f"🔄 Retrying Cloudinary upload for {file.filename}")
-                            try:
-                                # Reset file pointer and try again
-                                file.seek(0)
-                                uploaded_file = upload_to_cloudinary(file, client_id, key)
-                                documents[key] = uploaded_file
-                                print(f"✅ Retry successful - uploaded {file.filename} to Cloudinary")
-                                continue
-                            except Exception as retry_error:
-                                print(f"❌ Retry failed for {file.filename}: {str(retry_error)}")
-                            
-                            # Fallback to local storage only if Cloudinary completely fails
-                            print(f"💾 Falling back to local storage for {file.filename}")
-                            filename = secure_filename(file.filename)
-                            file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], f"{client_id}_{filename}")
-                            file.save(file_path)
-                            documents[key] = {
-                                'url': file_path,
-                                'original_filename': file.filename,
-                                'storage_type': 'local',
-                                'created_at': datetime.utcnow().isoformat()
-                            }
-                            print(f"💾 Saved {file.filename} to local storage as fallback")
-                    else:
-                        # Local storage only
-                        filename = secure_filename(file.filename)
-                        file_path = os.path.join(current_app.config['UPLOAD_FOLDER'], f"{client_id}_{filename}")
-                        file.save(file_path)
-                        documents[key] = {
-                            'url': file_path,
-                            'original_filename': file.filename,
-                            'storage_type': 'local',
-                            'created_at': datetime.utcnow().isoformat()
-                        }
-                        print(f"💾 Saved {file.filename} to local storage (Cloudinary not available)")
+                            print(f"✅ Retry successful - uploaded {file.filename} to Cloudinary")
+                        except Exception as retry_error:
+                            print(f"❌ Retry failed for {file.filename}: {str(retry_error)}")
+                            return jsonify({
+                                'error': f'Failed to upload document: {file.filename}',
+                                'details': 'Cloudinary upload failed after retry. Please try again later.'
+                            }), 500
             
             if documents:
                 update_data['documents'] = documents

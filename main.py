@@ -14,8 +14,20 @@ print(f"Python path: {sys.path}")
 client_bp = None
 try:
     print("🔄 Attempting to import client_routes...")
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Files in current directory: {os.listdir('.')}")
+    
+    # Check if client_routes.py exists
+    if os.path.exists('client_routes.py'):
+        print("✅ client_routes.py file found")
+    else:
+        print("❌ client_routes.py file not found")
+        
     from client_routes import client_bp
     print("✅ client_bp imported successfully")
+    print(f"Client blueprint name: {client_bp.name}")
+    print(f"Client blueprint url_prefix: {getattr(client_bp, 'url_prefix', 'None')}")
+    
 except ImportError as e:
     print(f"❌ ImportError in client_routes: {e}")
     print(f"Traceback: {traceback.format_exc()}")
@@ -34,8 +46,17 @@ except ImportError as e:
             return jsonify({
                 'error': 'Client routes module failed to import properly',
                 'clients': [],
-                'fallback': True
+                'fallback': True,
+                'message': 'Blueprint import failed - check server logs'
             }), 500
+        
+        @client_bp.route('/clients/test', methods=['GET'])
+        def test_clients_fallback():
+            return jsonify({
+                'status': 'fallback',
+                'message': 'Client routes fallback is working',
+                'timestamp': datetime.utcnow().isoformat()
+            }), 200
         
         print("✅ Fallback client blueprint created")
     except Exception as fallback_error:
@@ -51,8 +72,18 @@ except Exception as e:
 enquiry_bp = None
 try:
     print("🔄 Attempting to import enquiry_routes...")
+    
+    # Check if enquiry_routes.py exists
+    if os.path.exists('enquiry_routes.py'):
+        print("✅ enquiry_routes.py file found")
+    else:
+        print("❌ enquiry_routes.py file not found")
+        
     from enquiry_routes import enquiry_bp
     print("✅ enquiry_bp imported successfully")
+    print(f"Enquiry blueprint name: {enquiry_bp.name}")
+    print(f"Enquiry blueprint url_prefix: {getattr(enquiry_bp, 'url_prefix', 'None')}")
+    
 except ImportError as e:
     print(f"❌ ImportError in enquiry_routes: {e}")
     print(f"Traceback: {traceback.format_exc()}")
@@ -71,8 +102,17 @@ except ImportError as e:
             return jsonify({
                 'error': 'Enquiry routes module failed to import properly',
                 'enquiries': [],
-                'fallback': True
+                'fallback': True,
+                'message': 'Blueprint import failed - check server logs'
             }), 500
+        
+        @enquiry_bp.route('/enquiries/test', methods=['GET'])
+        def test_enquiries_fallback():
+            return jsonify({
+                'status': 'fallback',
+                'message': 'Enquiry routes fallback is working',
+                'timestamp': datetime.utcnow().isoformat()
+            }), 200
         
         print("✅ Fallback enquiry blueprint created")
     except Exception as fallback_error:

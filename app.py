@@ -52,15 +52,20 @@ additional_origins = os.getenv('ADDITIONAL_CORS_ORIGINS', '')
 if additional_origins:
     allowed_origins.extend(additional_origins.split(','))
 
-# For production debugging, temporarily allow all Vercel domains
+# For production, add comprehensive Vercel domain patterns
 flask_env = os.getenv('FLASK_ENV', 'development')
 if flask_env == 'production':
-    # Add common Vercel domain patterns for debugging
+    # Add all possible Vercel domain patterns
     vercel_domains = [
         "https://tmis-business-guru-git-main-perivihks-projects.vercel.app",
-        "https://tmis-business-guru-perivihks-projects.vercel.app"
+        "https://tmis-business-guru-perivihks-projects.vercel.app",
+        "https://tmis-business-guru-git-main.vercel.app",
+        "https://tmis-business-guru-frontend.vercel.app",
+        "https://tmis-business-guru-frontend-git-main.vercel.app",
+        "https://tmis-business-guru-frontend-perivihks-projects.vercel.app"
     ]
     allowed_origins.extend(vercel_domains)
+    print(f"🔧 Production mode: Added Vercel domains to CORS")
 
 print(f"🌐 CORS Allowed Origins: {allowed_origins}")
 print(f"🔧 Flask Environment: {flask_env}")
