@@ -60,15 +60,30 @@ def revoked_token_callback(jwt_header, jwt_payload):
     return jsonify({'msg': 'Token has been revoked'}), 401
 
 # MongoDB connection
+MONGODB_URI = os.getenv('MONGODB_URI')
+if not MONGODB_URI:
+    print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found!")
+    print("Please set MONGODB_URI in your environment variables or .env file")
+    print("Example: MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/database_name")
+    raise Exception("MONGODB_URI environment variable is required")
+
+print(f"🔄 Connecting to MongoDB...")
+print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
+
 try:
-    client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'))
+    client = MongoClient(MONGODB_URI)
     db = client.tmis_business_guru
     # Test connection
     db.command("ping")
-    print("MongoDB connection successful")
+    print("✅ MongoDB connection successful")
 except Exception as e:
-    print(f"MongoDB connection failed: {str(e)}")
-    db = None
+    print(f"❌ MongoDB connection failed: {str(e)}")
+    print("🔍 Troubleshooting:")
+    print("1. Check if MongoDB URI includes database name")
+    print("2. Verify MongoDB Atlas cluster is running")
+    print("3. Check network connectivity and IP whitelist")
+    print("4. Verify credentials in MongoDB URI")
+    raise Exception(f"Failed to connect to MongoDB: {str(e)}")
 
 # Collections
 if db is not None:

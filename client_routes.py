@@ -49,18 +49,23 @@ else:
     CLOUDINARY_ENABLED = False
 
 # MongoDB connection for this module with error handling
+MONGODB_URI = os.getenv('MONGODB_URI')
+if not MONGODB_URI:
+    print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found in client_routes!")
+    raise Exception("MONGODB_URI environment variable is required")
+
+print(f"🔄 Client routes connecting to MongoDB...")
 try:
-    client = MongoClient(os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'))
+    client = MongoClient(MONGODB_URI)
     db = client.tmis_business_guru
     # Test connection
     db.command("ping")
     clients_collection = db.clients
     users_collection = db.users
-    print("MongoDB connection successful for client_routes module")
+    print("✅ MongoDB connection successful for client_routes module")
 except Exception as e:
-    print(f"MongoDB connection failed for client_routes module: {str(e)}")
-    clients_collection = None
-    users_collection = None
+    print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
+    raise Exception(f"Failed to connect to MongoDB in client_routes: {str(e)}")
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""
