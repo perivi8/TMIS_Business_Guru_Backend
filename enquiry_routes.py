@@ -21,8 +21,8 @@ enquiry_bp = Blueprint('enquiry', __name__)
 try:
     mongodb_uri = os.getenv('MONGODB_URI')
     if not mongodb_uri:
-        logger.warning("MONGODB_URI not found in environment variables, using fallback")
-        mongodb_uri = "mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0"
+        logger.error("MONGODB_URI not found in environment variables")
+        raise ValueError("MONGODB_URI environment variable is required")
     
     logger.info(f"Connecting to MongoDB Atlas...")
     client = MongoClient(mongodb_uri)

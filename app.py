@@ -55,14 +55,17 @@ if additional_origins:
 # For production, add comprehensive Vercel domain patterns
 flask_env = os.getenv('FLASK_ENV', 'development')
 if flask_env == 'production':
-    # Add all possible Vercel domain patterns
+    # Add all possible Vercel domain patterns based on your project
     vercel_domains = [
         "https://tmis-business-guru-git-main-perivihks-projects.vercel.app",
         "https://tmis-business-guru-perivihks-projects.vercel.app",
         "https://tmis-business-guru-git-main.vercel.app",
         "https://tmis-business-guru-frontend.vercel.app",
         "https://tmis-business-guru-frontend-git-main.vercel.app",
-        "https://tmis-business-guru-frontend-perivihks-projects.vercel.app"
+        "https://tmis-business-guru-frontend-perivihks-projects.vercel.app",
+        # Add common Vercel patterns for your username
+        "https://tmis-business-guru-perivihk.vercel.app",
+        "https://tmis-business-guru-git-main-perivihk.vercel.app"
     ]
     allowed_origins.extend(vercel_domains)
     print(f"🔧 Production mode: Added Vercel domains to CORS")
@@ -223,10 +226,9 @@ def revoked_token_callback(jwt_header, jwt_payload):
 MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
     print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found!")
-    print("Please set MONGODB_URI in your Render dashboard:")
-    print("MONGODB_URI=mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0")
-    print("🔧 Using fallback MongoDB URI for this deployment...")
-    MONGODB_URI = "mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0"
+    print("Please set MONGODB_URI in your Render dashboard environment variables")
+    print("Required format: mongodb+srv://username:password@cluster.mongodb.net/database_name?retryWrites=true&w=majority")
+    raise ValueError("MONGODB_URI environment variable is required for production deployment")
 
 print(f"🔄 Connecting to MongoDB...")
 print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs

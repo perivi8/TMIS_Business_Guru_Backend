@@ -85,7 +85,7 @@ MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
     print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found in client_routes!")
     print("🔧 This will cause database operations to fail gracefully")
-    # Set to None but don't crash the module
+    # Set to None but don't crash the module - allow graceful degradation
     db = None
     clients_collection = None
     users_collection = None
