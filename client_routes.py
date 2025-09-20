@@ -1136,15 +1136,41 @@ def download_document(client_id, document_type):
         import requests
         from io import BytesIO
         
+        print(f"🔍 Download request: client_id={client_id}, document_type={document_type}")
+        
+        # Check database connection
+        if clients_collection is None:
+            print(f"❌ Database connection not available")
+            return jsonify({'error': 'Database service unavailable'}), 503
+        
+        # Validate client_id format
+        try:
+            ObjectId(client_id)
+        except Exception as e:
+            print(f"❌ Invalid client_id format: {client_id}")
+            return jsonify({'error': 'Invalid client ID format'}), 400
+        
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
         
         if not client:
+            print(f"❌ Client not found: {client_id}")
             return jsonify({'error': 'Client not found'}), 404
         
+        print(f"✅ Client found: {client.get('legal_name', client.get('user_name', 'Unknown'))}")
+        
+        # Check if documents exist
+        if 'documents' not in client or not client['documents']:
+            print(f"❌ No documents found for client: {client_id}")
+            return jsonify({'error': 'No documents available for this client'}), 404
+        
+        print(f"📄 Available documents: {list(client['documents'].keys())}")
+        
         if document_type not in client.get('documents', {}):
-            return jsonify({'error': 'Document not found'}), 404
+            print(f"❌ Document type '{document_type}' not found. Available: {list(client['documents'].keys())}")
+            return jsonify({'error': f'Document type "{document_type}" not found'}), 404
         
         file_info = client['documents'][document_type]
+        print(f"📋 File info for {document_type}: {type(file_info)} - {str(file_info)[:200]}...")
         
         # Handle Cloudinary files
         if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
@@ -1152,13 +1178,23 @@ def download_document(client_id, document_type):
             original_filename = file_info.get('original_filename', f'{document_type}.{file_info.get("format", "bin")}')
             
             try:
+                # Validate Cloudinary URL
+                if not cloudinary_url or not cloudinary_url.startswith('https://'):
+                    print(f"❌ Invalid Cloudinary URL: {cloudinary_url}")
+                    return jsonify({'error': 'Invalid document URL'}), 500
+                
                 # Download file from Cloudinary
                 print(f"📥 Downloading from Cloudinary: {cloudinary_url}")
                 cloudinary_response = requests.get(cloudinary_url, timeout=30, stream=True)
+                
+                print(f"📊 Cloudinary response status: {cloudinary_response.status_code}")
+                print(f"📊 Cloudinary response headers: {dict(cloudinary_response.headers)}")
+                
                 cloudinary_response.raise_for_status()
                 
                 # Get the file content
                 file_content = cloudinary_response.content
+                print(f"📦 Downloaded content size: {len(file_content)} bytes")
                 
                 # Determine the correct mimetype
                 file_format = file_info.get('format', '').lower()
@@ -1178,23 +1214,12 @@ def download_document(client_id, document_type):
                 print(f"✅ Successfully downloaded {original_filename} ({len(file_content)} bytes)")
                 print(f"📄 File format: {file_format}, MIME type: {mimetype}")
                 
-                # Enhanced PDF validation for PDF files (relaxed validation)
+                # Log PDF info but don't validate signature (trust Cloudinary)
                 if file_format == 'pdf':
-                    # Check if content starts with PDF signature
-                    if not file_content.startswith(b'%PDF'):
-                        print(f"⚠️ Warning: Downloaded content doesn't start with PDF signature")
-                        print(f"Content starts with: {file_content[:50]}")
-                        print(f"Content type from response: {cloudinary_response.headers.get('content-type', 'unknown')}")
-                        
-                        # Get the actual content type from Cloudinary response
-                        actual_content_type = cloudinary_response.headers.get('content-type', '')
-                        print(f"📄 Cloudinary content type: {actual_content_type}")
-                        
-                        # Don't reject the file - just log the issue and proceed
-                        # Some PDFs might have different headers or be wrapped in other formats
-                        print("⚠️ Proceeding with download - trusting Cloudinary's file format")
-                    else:
-                        print(f"✅ PDF signature validation passed")
+                    print(f"📄 PDF file detected: {original_filename}")
+                    print(f"Content type from Cloudinary: {cloudinary_response.headers.get('content-type', 'unknown')}")
+                    print(f"File size: {len(file_content)} bytes")
+                    # Trust Cloudinary's file format - no signature validation needed
                 
                 # Create proper Flask response with enhanced headers for PDF
                 response_headers = {
@@ -1228,10 +1253,17 @@ def download_document(client_id, document_type):
                 
             except requests.exceptions.RequestException as e:
                 print(f"❌ Error downloading from Cloudinary: {str(e)}")
+                print(f"❌ Request exception type: {type(e)}")
+                if hasattr(e, 'response') and e.response is not None:
+                    print(f"❌ Response status: {e.response.status_code}")
+                    print(f"❌ Response text: {e.response.text[:500]}")
                 # Fallback: redirect to Cloudinary URL
                 return redirect(cloudinary_url)
             except Exception as e:
                 print(f"❌ Error processing Cloudinary file: {str(e)}")
+                print(f"❌ Exception type: {type(e)}")
+                import traceback
+                print(f"❌ Full traceback: {traceback.format_exc()}")
                 return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
         
         # Handle string URLs (direct Cloudinary URLs)
@@ -1264,23 +1296,12 @@ def download_document(client_id, document_type):
                 print(f"✅ Successfully downloaded {filename} ({len(file_content)} bytes)")
                 print(f"📄 MIME type: {mimetype}")
                 
-                # Enhanced PDF validation for PDF files (relaxed validation)
+                # Log PDF info but don't validate signature (trust Cloudinary)
                 if mimetype == 'application/pdf':
-                    # Check if content starts with PDF signature
-                    if not file_content.startswith(b'%PDF'):
-                        print(f"⚠️ Warning: Downloaded content doesn't start with PDF signature")
-                        print(f"Content starts with: {file_content[:50]}")
-                        print(f"Content type from response: {cloudinary_response.headers.get('content-type', 'unknown')}")
-                        
-                        # Get the actual content type from Cloudinary response
-                        actual_content_type = cloudinary_response.headers.get('content-type', '')
-                        print(f"📄 Cloudinary content type: {actual_content_type}")
-                        
-                        # Don't reject the file - just log the issue and proceed
-                        # Some PDFs might have different headers or be wrapped in other formats
-                        print("⚠️ Proceeding with download - trusting Cloudinary's file format")
-                    else:
-                        print(f"✅ PDF signature validation passed")
+                    print(f"📄 PDF file detected from URL")
+                    print(f"Content type from Cloudinary: {cloudinary_response.headers.get('content-type', 'unknown')}")
+                    print(f"File size: {len(file_content)} bytes")
+                    # Trust Cloudinary's file format - no signature validation needed
                 
                 # Create proper Flask response with enhanced headers
                 response_headers = {
@@ -1328,35 +1349,196 @@ def download_document(client_id, document_type):
         
     except Exception as e:
         print(f"❌ Download error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        print(f"❌ Exception type: {type(e)}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        # Provide more specific error messages
+        error_message = str(e)
+        if 'ObjectId' in error_message:
+            error_message = 'Invalid client ID format'
+        elif 'not found' in error_message.lower():
+            error_message = 'Document or client not found'
+        elif 'cloudinary' in error_message.lower():
+            error_message = 'Document storage service error'
+        elif 'timeout' in error_message.lower():
+            error_message = 'Request timeout - please try again'
+        
+        return jsonify({
+            'error': error_message,
+            'details': f'Download failed for document type: {document_type}',
+            'client_id': client_id,
+            'document_type': document_type
+        }), 500
 
 @client_bp.route('/clients/<client_id>/preview/<document_type>')
 @jwt_required()
 def preview_document(client_id, document_type):
     """Preview endpoint that serves files for inline viewing (not download)"""
     try:
-        from flask import redirect
+        from flask import redirect, Response
+        import requests
+        
+        print(f"🔍 Preview request: client_id={client_id}, document_type={document_type}")
+        
+        # Check database connection
+        if clients_collection is None:
+            print(f"❌ Database connection not available for preview")
+            return jsonify({'error': 'Database service unavailable'}), 503
+        
+        # Validate client_id format
+        try:
+            ObjectId(client_id)
+        except Exception as e:
+            print(f"❌ Invalid client_id format for preview: {client_id}")
+            return jsonify({'error': 'Invalid client ID format'}), 400
         
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
         
         if not client:
+            print(f"❌ Client not found for preview: {client_id}")
             return jsonify({'error': 'Client not found'}), 404
         
+        print(f"✅ Client found for preview: {client.get('legal_name', client.get('user_name', 'Unknown'))}")
+        
+        # Check if documents exist
+        if 'documents' not in client or not client['documents']:
+            print(f"❌ No documents found for preview: {client_id}")
+            return jsonify({'error': 'No documents available for this client'}), 404
+        
+        print(f"📄 Available documents for preview: {list(client['documents'].keys())}")
+        
         if document_type not in client.get('documents', {}):
-            return jsonify({'error': 'Document not found'}), 404
+            print(f"❌ Document type '{document_type}' not found for preview. Available: {list(client['documents'].keys())}")
+            return jsonify({'error': f'Document type "{document_type}" not found'}), 404
         
         file_info = client['documents'][document_type]
+        print(f"📋 File info for preview {document_type}: {type(file_info)} - {str(file_info)[:200]}...")
         
-        # Handle Cloudinary files - for preview, we can redirect directly
+        # Handle Cloudinary files - serve the content directly for better compatibility
         if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
             cloudinary_url = file_info['url']
-            # For images and PDFs, redirect directly to Cloudinary for preview
-            return redirect(cloudinary_url)
+            original_filename = file_info.get('original_filename', f'{document_type}.{file_info.get("format", "bin")}')
+            
+            try:
+                print(f"📥 Fetching for preview from Cloudinary: {cloudinary_url}")
+                cloudinary_response = requests.get(cloudinary_url, timeout=30, stream=True)
+                cloudinary_response.raise_for_status()
+                
+                # Get the file content
+                file_content = cloudinary_response.content
+                
+                # Determine the correct mimetype
+                file_format = file_info.get('format', '').lower()
+                if file_format == 'pdf':
+                    mimetype = 'application/pdf'
+                elif file_format in ['jpg', 'jpeg']:
+                    mimetype = 'image/jpeg'
+                elif file_format == 'png':
+                    mimetype = 'image/png'
+                elif file_format == 'gif':
+                    mimetype = 'image/gif'
+                elif file_format == 'webp':
+                    mimetype = 'image/webp'
+                else:
+                    mimetype = 'application/octet-stream'
+                
+                print(f"✅ Successfully fetched for preview: {original_filename} ({len(file_content)} bytes)")
+                print(f"📄 File format: {file_format}, MIME type: {mimetype}")
+                
+                # Create proper Flask response for inline viewing (not download)
+                response_headers = {
+                    'Content-Type': mimetype,
+                    'Content-Length': str(len(file_content)),
+                    'Cache-Control': 'public, max-age=3600',  # Allow caching for preview
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+                }
+                
+                # For inline viewing, don't set Content-Disposition as attachment
+                if mimetype in ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp']:
+                    response_headers['Content-Disposition'] = f'inline; filename="{original_filename}"'
+                else:
+                    response_headers['Content-Disposition'] = f'attachment; filename="{original_filename}"'
+                
+                flask_response = Response(
+                    file_content,
+                    mimetype=mimetype,
+                    headers=response_headers
+                )
+                
+                return flask_response
+                
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Error fetching from Cloudinary for preview: {str(e)}")
+                # Fallback: redirect to Cloudinary URL
+                return redirect(cloudinary_url)
+            except Exception as e:
+                print(f"❌ Error processing Cloudinary file for preview: {str(e)}")
+                return jsonify({'error': f'Failed to preview file: {str(e)}'}), 500
         
         # Handle string URLs (direct Cloudinary URLs)
         elif isinstance(file_info, str) and file_info.startswith('https://res.cloudinary.com'):
-            # Direct redirect to Cloudinary URL for preview
-            return redirect(file_info)
+            try:
+                print(f"📥 Fetching for preview from Cloudinary URL: {file_info}")
+                cloudinary_response = requests.get(file_info, timeout=30, stream=True)
+                cloudinary_response.raise_for_status()
+                
+                # Extract filename from URL or use document type
+                filename = f'{document_type}.{file_info.split(".")[-1] if "." in file_info else "bin"}'
+                
+                # Get the file content
+                file_content = cloudinary_response.content
+                
+                # Determine mimetype from URL extension
+                if file_info.lower().endswith('.pdf'):
+                    mimetype = 'application/pdf'
+                elif file_info.lower().endswith(('.jpg', '.jpeg')):
+                    mimetype = 'image/jpeg'
+                elif file_info.lower().endswith('.png'):
+                    mimetype = 'image/png'
+                elif file_info.lower().endswith('.gif'):
+                    mimetype = 'image/gif'
+                elif file_info.lower().endswith('.webp'):
+                    mimetype = 'image/webp'
+                else:
+                    mimetype = 'application/octet-stream'
+                
+                print(f"✅ Successfully fetched for preview: {filename} ({len(file_content)} bytes)")
+                print(f"📄 MIME type: {mimetype}")
+                
+                # Create proper Flask response for inline viewing
+                response_headers = {
+                    'Content-Type': mimetype,
+                    'Content-Length': str(len(file_content)),
+                    'Cache-Control': 'public, max-age=3600',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+                }
+                
+                # For inline viewing
+                if mimetype in ['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp']:
+                    response_headers['Content-Disposition'] = f'inline; filename="{filename}"'
+                else:
+                    response_headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+                
+                flask_response = Response(
+                    file_content,
+                    mimetype=mimetype,
+                    headers=response_headers
+                )
+                
+                return flask_response
+                
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Error fetching from Cloudinary URL for preview: {str(e)}")
+                # Fallback: redirect to the URL
+                return redirect(file_info)
+            except Exception as e:
+                print(f"❌ Error processing Cloudinary URL for preview: {str(e)}")
+                return jsonify({'error': f'Failed to preview file: {str(e)}'}), 500
         
         # Handle local files
         elif isinstance(file_info, str) and os.path.exists(file_info):
@@ -1381,7 +1563,27 @@ def preview_document(client_id, document_type):
         
     except Exception as e:
         print(f"❌ Preview error: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        print(f"❌ Exception type: {type(e)}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        # Provide more specific error messages
+        error_message = str(e)
+        if 'ObjectId' in error_message:
+            error_message = 'Invalid client ID format'
+        elif 'not found' in error_message.lower():
+            error_message = 'Document or client not found'
+        elif 'cloudinary' in error_message.lower():
+            error_message = 'Document storage service error'
+        elif 'timeout' in error_message.lower():
+            error_message = 'Request timeout - please try again'
+        
+        return jsonify({
+            'error': error_message,
+            'details': f'Preview failed for document type: {document_type}',
+            'client_id': client_id,
+            'document_type': document_type
+        }), 500
 
 @client_bp.route('/clients/<client_id>/download-direct/<document_type>')
 @jwt_required()
