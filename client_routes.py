@@ -1154,11 +1154,11 @@ def download_document(client_id, document_type):
             try:
                 # Download file from Cloudinary
                 print(f"📥 Downloading from Cloudinary: {cloudinary_url}")
-                response = requests.get(cloudinary_url, stream=True, timeout=30)
-                response.raise_for_status()
+                cloudinary_response = requests.get(cloudinary_url, timeout=30)
+                cloudinary_response.raise_for_status()
                 
                 # Get the file content
-                file_content = response.content
+                file_content = cloudinary_response.content
                 
                 # Determine the correct mimetype
                 file_format = file_info.get('format', '').lower()
@@ -1178,20 +1178,28 @@ def download_document(client_id, document_type):
                 print(f"✅ Successfully downloaded {original_filename} ({len(file_content)} bytes)")
                 print(f"📄 File format: {file_format}, MIME type: {mimetype}")
                 
-                # Create proper response with headers for PDF download
-                response = Response(
+                # Validate PDF content for PDF files
+                if file_format == 'pdf':
+                    if not file_content.startswith(b'%PDF'):
+                        print(f"❌ Warning: Downloaded content doesn't appear to be a valid PDF")
+                        print(f"Content starts with: {file_content[:20]}")
+                        return jsonify({'error': 'Downloaded file is not a valid PDF'}), 500
+                
+                # Create proper Flask response with headers
+                flask_response = Response(
                     file_content,
                     mimetype=mimetype,
                     headers={
                         'Content-Disposition': f'attachment; filename="{original_filename}"',
                         'Content-Length': str(len(file_content)),
+                        'Content-Type': mimetype,
                         'Cache-Control': 'no-cache, no-store, must-revalidate',
                         'Pragma': 'no-cache',
                         'Expires': '0'
                     }
                 )
                 
-                return response
+                return flask_response
                 
             except requests.exceptions.RequestException as e:
                 print(f"❌ Error downloading from Cloudinary: {str(e)}")
@@ -1205,14 +1213,14 @@ def download_document(client_id, document_type):
         elif isinstance(file_info, str) and file_info.startswith('https://res.cloudinary.com'):
             try:
                 print(f"📥 Downloading from Cloudinary URL: {file_info}")
-                response = requests.get(file_info, stream=True, timeout=30)
-                response.raise_for_status()
+                cloudinary_response = requests.get(file_info, timeout=30)
+                cloudinary_response.raise_for_status()
                 
                 # Extract filename from URL or use document type
                 filename = f'{document_type}.{file_info.split(".")[-1] if "." in file_info else "bin"}'
                 
                 # Get the file content
-                file_content = response.content
+                file_content = cloudinary_response.content
                 
                 # Determine mimetype from URL extension
                 if file_info.lower().endswith('.pdf'):
@@ -1231,20 +1239,28 @@ def download_document(client_id, document_type):
                 print(f"✅ Successfully downloaded {filename} ({len(file_content)} bytes)")
                 print(f"📄 MIME type: {mimetype}")
                 
-                # Create proper response with headers for PDF download
-                response = Response(
+                # Validate PDF content for PDF files
+                if mimetype == 'application/pdf':
+                    if not file_content.startswith(b'%PDF'):
+                        print(f"❌ Warning: Downloaded content doesn't appear to be a valid PDF")
+                        print(f"Content starts with: {file_content[:20]}")
+                        return jsonify({'error': 'Downloaded file is not a valid PDF'}), 500
+                
+                # Create proper Flask response with headers
+                flask_response = Response(
                     file_content,
                     mimetype=mimetype,
                     headers={
                         'Content-Disposition': f'attachment; filename="{filename}"',
                         'Content-Length': str(len(file_content)),
+                        'Content-Type': mimetype,
                         'Cache-Control': 'no-cache, no-store, must-revalidate',
                         'Pragma': 'no-cache',
                         'Expires': '0'
                     }
                 )
                 
-                return response
+                return flask_response
                 
             except requests.exceptions.RequestException as e:
                 print(f"❌ Error downloading from Cloudinary URL: {str(e)}")
