@@ -332,7 +332,7 @@ def register():
             return jsonify({'error': 'Passwords do not match'}), 400
         
         # Check database connection
-        if db is None or users_collection is None:
+        if db is None:
             return jsonify({'error': 'Database connection failed'}), 500
         
         # Check if user already exists
@@ -376,7 +376,7 @@ def login():
             return jsonify({'error': 'Email and password are required'}), 400
         
         # Check database connection
-        if db is None or users_collection is None:
+        if db is None:
             print("Database connection not available")
             return jsonify({'error': 'Database connection failed'}), 500
         
@@ -418,7 +418,7 @@ def login():
 def get_users():
     try:
         # Check database connection
-        if db is None or users_collection is None:
+        if db is None:
             return jsonify({'error': 'Database connection failed'}), 500
         
         # Only admin can view all users
@@ -444,7 +444,7 @@ def get_team():
     """Get team members - accessible to all authenticated users"""
     try:
         # Check database connection
-        if db is None or users_collection is None:
+        if db is None:
             return jsonify({'error': 'Database connection failed'}), 500
         
         # All authenticated users can view team members
@@ -473,7 +473,7 @@ def debug_all_users():
         print(f"=== DEBUG ALL USERS (NO JWT) ===")
         
         # Check database connection
-        if db is None or users_collection is None:
+        if db is None:
             return jsonify({
                 'status': 'error',
                 'message': 'Database connection not available',
@@ -773,7 +773,7 @@ except Exception as e:
             print(f"User Email: {user_email}")
             
             # Check database connection
-            if db is None or clients_collection is None:
+            if db is None:
                 print("Database connection not available")
                 return jsonify({
                     'error': 'Database connection failed', 

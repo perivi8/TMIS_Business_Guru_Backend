@@ -206,7 +206,7 @@ client_bp = Blueprint('client', __name__)
 
 def check_database_connection():
     """Check if database connection is available and working"""
-    if db is None or clients_collection is None or users_collection is None:
+    if db is None:
         return False, "Database connection not available"
     
     try:
@@ -310,8 +310,12 @@ def create_client():
         
         # Get current user information
         current_user = None
-        if users_collection:
-            current_user = users_collection.find_one({'email': current_user_id})
+        if db is not None:
+            try:
+                current_user = users_collection.find_one({'email': current_user_id})
+            except Exception as e:
+                print(f"Error fetching user: {e}")
+                current_user = None
         
         user_email = current_user.get('email', current_user_id) if current_user else current_user_id
         is_tmis_user = user_email.startswith('tmis.') if user_email else False
@@ -428,8 +432,12 @@ def cloudinary_status():
     
     # Get current user information
     current_user = None
-    if users_collection:
-        current_user = users_collection.find_one({'email': current_user_id})
+    if db is not None:
+        try:
+            current_user = users_collection.find_one({'email': current_user_id})
+        except Exception as e:
+            print(f"Error fetching user: {e}")
+            current_user = None
     
     user_email = current_user.get('email', current_user_id) if current_user else current_user_id
     is_tmis_user = user_email.startswith('tmis.') if user_email else False
@@ -517,7 +525,7 @@ def get_clients():
         print(f"User Email: {user_email}")
         
         # Check database connection first
-        if db is None or clients_collection is None or users_collection is None:
+        if db is None:
             print("Database connection not available")
             return jsonify({
                 'error': 'Database connection failed', 
@@ -770,8 +778,12 @@ def update_client_details(client_id):
         
         # Get current user information
         current_user = None
-        if users_collection:
-            current_user = users_collection.find_one({'email': current_user_id})
+        if db is not None:
+            try:
+                current_user = users_collection.find_one({'email': current_user_id})
+            except Exception as e:
+                print(f"Error fetching user: {e}")
+                current_user = None
         
         user_email = current_user.get('email', current_user_id) if current_user else current_user_id
         is_tmis_user = user_email.startswith('tmis.') if user_email else False
