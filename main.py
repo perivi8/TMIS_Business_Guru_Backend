@@ -235,10 +235,25 @@ if client_bp:
         print(f"Traceback: {traceback.format_exc()}")
 else:
     print("❌ client_bp not available - creating emergency fallback")
-    # Create emergency fallback route directly on app
+    # Create emergency fallback route directly on app with JWT authentication
+    from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+    
     @app.route('/api/clients', methods=['GET'])
+    @jwt_required()
     def emergency_clients():
         try:
+            print("=== EMERGENCY FALLBACK ROUTE ACCESSED ===")
+            
+            # Get JWT claims for debugging
+            claims = get_jwt()
+            current_user_id = get_jwt_identity()
+            user_role = claims.get('role', 'user')
+            user_email = claims.get('email', current_user_id)
+            
+            print(f"Emergency route - User ID: {current_user_id}")
+            print(f"Emergency route - User Role: {user_role}")
+            print(f"Emergency route - User Email: {user_email}")
+            
             # Try to import and use the database connection from app.py
             from app import db, clients_collection
             
@@ -247,27 +262,60 @@ else:
                     'error': 'Database connection not available',
                     'clients': [],
                     'emergency_fallback': True,
-                    'message': 'MongoDB connection failed - check environment variables'
+                    'message': 'MongoDB connection failed - check environment variables',
+                    'debug_info': {
+                        'user_id': current_user_id,
+                        'user_role': user_role,
+                        'db_status': 'disconnected'
+                    }
+                }), 500
+            
+            # Test database connection
+            try:
+                db.command("ping")
+                print("Emergency route - Database connection successful")
+            except Exception as db_error:
+                print(f"Emergency route - Database connection failed: {str(db_error)}")
+                return jsonify({
+                    'error': 'Database connection failed',
+                    'clients': [],
+                    'emergency_fallback': True,
+                    'message': f'Database ping failed: {str(db_error)}'
                 }), 500
             
             # Try to get clients from database
             try:
-                clients_cursor = clients_collection.find()
-                clients_list = []
+                if user_role == 'admin':
+                    # Admin can see all clients
+                    clients_cursor = clients_collection.find()
+                    print("Emergency route - Admin user, fetching all clients")
+                else:
+                    # Regular users see only their clients
+                    clients_cursor = clients_collection.find({'created_by': current_user_id})
+                    print(f"Emergency route - Regular user, fetching clients for: {current_user_id}")
                 
+                clients_list = []
                 for client in clients_cursor:
                     # Convert ObjectId to string
                     client['_id'] = str(client['_id'])
                     clients_list.append(client)
                 
+                print(f"Emergency route - Found {len(clients_list)} clients")
+                
                 return jsonify({
                     'clients': clients_list,
                     'emergency_fallback': True,
                     'message': 'Emergency fallback route working - blueprint import failed',
-                    'count': len(clients_list)
+                    'count': len(clients_list),
+                    'debug_info': {
+                        'user_id': current_user_id,
+                        'user_role': user_role,
+                        'user_email': user_email
+                    }
                 }), 200
                 
             except Exception as db_error:
+                print(f"Emergency route - Database query error: {str(db_error)}")
                 return jsonify({
                     'error': f'Database query failed: {str(db_error)}',
                     'clients': [],
@@ -299,15 +347,93 @@ if enquiry_bp:
         print(f"Traceback: {traceback.format_exc()}")
 else:
     print("❌ enquiry_bp not available - creating emergency fallback")
-    # Create emergency fallback route directly on app
+    # Create emergency fallback route directly on app with JWT authentication
+    from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+    
     @app.route('/api/enquiries', methods=['GET'])
+    @jwt_required()
     def emergency_enquiries():
-        return jsonify({
-            'error': 'Enquiry blueprint registration failed',
-            'enquiries': [],
-            'emergency_fallback': True,
-            'message': 'Please check server logs for import errors'
-        }), 500
+        try:
+            print("=== EMERGENCY ENQUIRY FALLBACK ROUTE ACCESSED ===")
+            
+            # Get JWT claims for debugging
+            claims = get_jwt()
+            current_user_id = get_jwt_identity()
+            user_role = claims.get('role', 'user')
+            user_email = claims.get('email', current_user_id)
+            
+            print(f"Emergency enquiry route - User ID: {current_user_id}")
+            print(f"Emergency enquiry route - User Role: {user_role}")
+            
+            # Try to import and use the database connection from app.py
+            from app import db
+            
+            if db is None:
+                return jsonify({
+                    'error': 'Database connection not available',
+                    'enquiries': [],
+                    'emergency_fallback': True,
+                    'message': 'MongoDB connection failed - check environment variables'
+                }), 500
+            
+            # Test database connection
+            try:
+                db.command("ping")
+                print("Emergency enquiry route - Database connection successful")
+            except Exception as db_error:
+                print(f"Emergency enquiry route - Database connection failed: {str(db_error)}")
+                return jsonify({
+                    'error': 'Database connection failed',
+                    'enquiries': [],
+                    'emergency_fallback': True,
+                    'message': f'Database ping failed: {str(db_error)}'
+                }), 500
+            
+            # Try to get enquiries from database
+            try:
+                enquiries_collection = db.enquiries
+                
+                if user_role == 'admin':
+                    # Admin can see all enquiries
+                    enquiries_cursor = enquiries_collection.find()
+                    print("Emergency enquiry route - Admin user, fetching all enquiries")
+                else:
+                    # Regular users see only their enquiries
+                    enquiries_cursor = enquiries_collection.find({'created_by': current_user_id})
+                    print(f"Emergency enquiry route - Regular user, fetching enquiries for: {current_user_id}")
+                
+                enquiries_list = []
+                for enquiry in enquiries_cursor:
+                    # Convert ObjectId to string
+                    enquiry['_id'] = str(enquiry['_id'])
+                    enquiries_list.append(enquiry)
+                
+                print(f"Emergency enquiry route - Found {len(enquiries_list)} enquiries")
+                
+                return jsonify({
+                    'enquiries': enquiries_list,
+                    'emergency_fallback': True,
+                    'message': 'Emergency enquiry fallback route working - blueprint import failed',
+                    'count': len(enquiries_list)
+                }), 200
+                
+            except Exception as db_error:
+                print(f"Emergency enquiry route - Database query error: {str(db_error)}")
+                return jsonify({
+                    'error': f'Database query failed: {str(db_error)}',
+                    'enquiries': [],
+                    'emergency_fallback': True,
+                    'message': 'Database connection exists but query failed'
+                }), 500
+                
+        except Exception as e:
+            print(f"Emergency enquiry route - General error: {str(e)}")
+            return jsonify({
+                'error': f'Emergency enquiry fallback failed: {str(e)}',
+                'enquiries': [],
+                'emergency_fallback': True,
+                'message': 'Critical system error'
+            }), 500
 
 print(f"📋 Total registered blueprints: {len(app.blueprints)}")
 print(f"📋 Blueprint names: {list(app.blueprints.keys())}")
