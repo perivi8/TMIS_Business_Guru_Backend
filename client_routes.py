@@ -1178,22 +1178,23 @@ def download_document(client_id, document_type):
                 print(f"✅ Successfully downloaded {original_filename} ({len(file_content)} bytes)")
                 print(f"📄 File format: {file_format}, MIME type: {mimetype}")
                 
-                # Enhanced PDF validation for PDF files
+                # Enhanced PDF validation for PDF files (relaxed validation)
                 if file_format == 'pdf':
                     # Check if content starts with PDF signature
                     if not file_content.startswith(b'%PDF'):
-                        print(f"❌ Warning: Downloaded content doesn't appear to be a valid PDF")
+                        print(f"⚠️ Warning: Downloaded content doesn't start with PDF signature")
                         print(f"Content starts with: {file_content[:50]}")
                         print(f"Content type from response: {cloudinary_response.headers.get('content-type', 'unknown')}")
                         
-                        # Try to get the actual content type from Cloudinary response
+                        # Get the actual content type from Cloudinary response
                         actual_content_type = cloudinary_response.headers.get('content-type', '')
-                        if 'application/pdf' not in actual_content_type.lower():
-                            print(f"❌ Cloudinary returned non-PDF content: {actual_content_type}")
-                            return jsonify({'error': 'File is not a valid PDF document'}), 400
+                        print(f"📄 Cloudinary content type: {actual_content_type}")
                         
-                        # If Cloudinary says it's a PDF but content doesn't match, still try to serve it
-                        print("⚠️ Proceeding with download despite PDF signature mismatch")
+                        # Don't reject the file - just log the issue and proceed
+                        # Some PDFs might have different headers or be wrapped in other formats
+                        print("⚠️ Proceeding with download - trusting Cloudinary's file format")
+                    else:
+                        print(f"✅ PDF signature validation passed")
                 
                 # Create proper Flask response with enhanced headers for PDF
                 response_headers = {
@@ -1203,14 +1204,18 @@ def download_document(client_id, document_type):
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
                     'Pragma': 'no-cache',
                     'Expires': '0',
-                    'X-Content-Type-Options': 'nosniff'
+                    'X-Content-Type-Options': 'nosniff',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
                 }
                 
                 # Additional headers for PDF files
                 if file_format == 'pdf':
                     response_headers.update({
                         'Content-Transfer-Encoding': 'binary',
-                        'Accept-Ranges': 'bytes'
+                        'Accept-Ranges': 'bytes',
+                        'X-Frame-Options': 'SAMEORIGIN'
                     })
                 
                 flask_response = Response(
@@ -1259,22 +1264,23 @@ def download_document(client_id, document_type):
                 print(f"✅ Successfully downloaded {filename} ({len(file_content)} bytes)")
                 print(f"📄 MIME type: {mimetype}")
                 
-                # Enhanced PDF validation for PDF files
+                # Enhanced PDF validation for PDF files (relaxed validation)
                 if mimetype == 'application/pdf':
                     # Check if content starts with PDF signature
                     if not file_content.startswith(b'%PDF'):
-                        print(f"❌ Warning: Downloaded content doesn't appear to be a valid PDF")
+                        print(f"⚠️ Warning: Downloaded content doesn't start with PDF signature")
                         print(f"Content starts with: {file_content[:50]}")
                         print(f"Content type from response: {cloudinary_response.headers.get('content-type', 'unknown')}")
                         
-                        # Try to get the actual content type from Cloudinary response
+                        # Get the actual content type from Cloudinary response
                         actual_content_type = cloudinary_response.headers.get('content-type', '')
-                        if 'application/pdf' not in actual_content_type.lower():
-                            print(f"❌ Cloudinary returned non-PDF content: {actual_content_type}")
-                            return jsonify({'error': 'File is not a valid PDF document'}), 400
+                        print(f"📄 Cloudinary content type: {actual_content_type}")
                         
-                        # If Cloudinary says it's a PDF but content doesn't match, still try to serve it
-                        print("⚠️ Proceeding with download despite PDF signature mismatch")
+                        # Don't reject the file - just log the issue and proceed
+                        # Some PDFs might have different headers or be wrapped in other formats
+                        print("⚠️ Proceeding with download - trusting Cloudinary's file format")
+                    else:
+                        print(f"✅ PDF signature validation passed")
                 
                 # Create proper Flask response with enhanced headers
                 response_headers = {
@@ -1284,14 +1290,18 @@ def download_document(client_id, document_type):
                     'Cache-Control': 'no-cache, no-store, must-revalidate',
                     'Pragma': 'no-cache',
                     'Expires': '0',
-                    'X-Content-Type-Options': 'nosniff'
+                    'X-Content-Type-Options': 'nosniff',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
                 }
                 
                 # Additional headers for PDF files
                 if mimetype == 'application/pdf':
                     response_headers.update({
                         'Content-Transfer-Encoding': 'binary',
-                        'Accept-Ranges': 'bytes'
+                        'Accept-Ranges': 'bytes',
+                        'X-Frame-Options': 'SAMEORIGIN'
                     })
                 
                 flask_response = Response(
