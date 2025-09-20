@@ -671,27 +671,61 @@ def get_client_details(client_id):
         # Process document paths to be accessible
         if 'documents' in client:
             processed_documents = {}
-            for doc_type, file_path in client['documents'].items():
-                if isinstance(file_path, dict) and file_path.get('storage_type') == 'cloudinary':
+            for doc_type, file_info in client['documents'].items():
+                if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
+                    # For Cloudinary files, provide direct access
                     processed_documents[doc_type] = {
-                        'file_name': file_path['original_filename'],
-                        'file_size': file_path['bytes'],
-                        'file_path': file_path['url'],
-                        'download_url': file_path['url']
+                        'file_name': file_info.get('original_filename', 'Unknown'),
+                        'file_size': file_info.get('bytes', 0),
+                        'file_type': file_info.get('format', 'unknown'),
+                        'storage_type': 'cloudinary',
+                        'preview_url': file_info['url'],  # Direct Cloudinary URL for preview
+                        'download_url': f'/api/clients/{client_id}/download/{doc_type}',  # Backend download endpoint
+                        'direct_url': file_info['url'],  # Direct Cloudinary URL as fallback
+                        'public_id': file_info.get('public_id', ''),
+                        'is_image': file_info.get('format', '').lower() in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+                        'is_pdf': file_info.get('format', '').lower() == 'pdf'
                     }
-                elif os.path.exists(file_path):
-                    # Get file info
-                    file_stats = os.stat(file_path)
+                elif isinstance(file_info, str) and os.path.exists(file_info):
+                    # For local files
+                    file_stats = os.stat(file_info)
                     file_size = file_stats.st_size
-                    file_name = os.path.basename(file_path)
+                    file_name = os.path.basename(file_info)
+                    file_ext = os.path.splitext(file_name)[1].lower().lstrip('.')
                     
                     processed_documents[doc_type] = {
                         'file_name': file_name,
                         'file_size': file_size,
-                        'file_path': file_path,
-                        'download_url': f'/clients/{client_id}/download/{doc_type}'
+                        'file_type': file_ext,
+                        'storage_type': 'local',
+                        'preview_url': f'/api/clients/{client_id}/download/{doc_type}',
+                        'download_url': f'/api/clients/{client_id}/download/{doc_type}',
+                        'direct_url': f'/api/clients/{client_id}/download/{doc_type}',
+                        'is_image': file_ext in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+                        'is_pdf': file_ext == 'pdf'
                     }
+                else:
+                    # Handle missing or invalid files
+                    processed_documents[doc_type] = {
+                        'file_name': 'File not found',
+                        'file_size': 0,
+                        'file_type': 'unknown',
+                        'storage_type': 'missing',
+                        'preview_url': None,
+                        'download_url': None,
+                        'direct_url': None,
+                        'is_image': False,
+                        'is_pdf': False,
+                        'error': 'File not found or invalid format'
+                    }
+            
             client['processed_documents'] = processed_documents
+            
+            # Also update the original documents for backward compatibility
+            for doc_type, file_info in client['documents'].items():
+                if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
+                    # Replace the complex object with just the URL for simple access
+                    client['documents'][doc_type] = file_info['url']
         
         return jsonify({'client': client}), 200
         
@@ -1098,6 +1132,10 @@ def delete_client(client_id):
 @jwt_required()
 def download_document(client_id, document_type):
     try:
+        from flask import redirect
+        import requests
+        from io import BytesIO
+        
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
         
         if not client:
@@ -1106,14 +1144,160 @@ def download_document(client_id, document_type):
         if document_type not in client.get('documents', {}):
             return jsonify({'error': 'Document not found'}), 404
         
-        file_path = client['documents'][document_type]
+        file_info = client['documents'][document_type]
         
-        if isinstance(file_path, dict) and file_path.get('storage_type') == 'cloudinary':
-            return jsonify({'url': file_path['url']}), 200
-        elif not os.path.exists(file_path):
+        # Handle Cloudinary files
+        if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
+            cloudinary_url = file_info['url']
+            original_filename = file_info.get('original_filename', f'{document_type}.{file_info.get("format", "bin")}')
+            
+            try:
+                # Download file from Cloudinary
+                print(f"📥 Downloading from Cloudinary: {cloudinary_url}")
+                response = requests.get(cloudinary_url, stream=True, timeout=30)
+                response.raise_for_status()
+                
+                # Create a BytesIO object from the response content
+                file_data = BytesIO(response.content)
+                file_data.seek(0)
+                
+                # Determine the correct mimetype
+                file_format = file_info.get('format', '').lower()
+                if file_format == 'pdf':
+                    mimetype = 'application/pdf'
+                elif file_format in ['jpg', 'jpeg']:
+                    mimetype = 'image/jpeg'
+                elif file_format == 'png':
+                    mimetype = 'image/png'
+                elif file_format == 'gif':
+                    mimetype = 'image/gif'
+                elif file_format == 'webp':
+                    mimetype = 'image/webp'
+                else:
+                    mimetype = 'application/octet-stream'
+                
+                print(f"✅ Successfully downloaded {original_filename} ({len(response.content)} bytes)")
+                
+                # Return the file with proper headers
+                return send_file(
+                    file_data,
+                    as_attachment=True,
+                    download_name=original_filename,
+                    mimetype=mimetype
+                )
+                
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Error downloading from Cloudinary: {str(e)}")
+                # Fallback: redirect to Cloudinary URL
+                return redirect(cloudinary_url)
+            except Exception as e:
+                print(f"❌ Error processing Cloudinary file: {str(e)}")
+                return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
+        
+        # Handle string URLs (direct Cloudinary URLs)
+        elif isinstance(file_info, str) and file_info.startswith('https://res.cloudinary.com'):
+            try:
+                print(f"📥 Downloading from Cloudinary URL: {file_info}")
+                response = requests.get(file_info, stream=True, timeout=30)
+                response.raise_for_status()
+                
+                # Extract filename from URL or use document type
+                filename = f'{document_type}.{file_info.split(".")[-1] if "." in file_info else "bin"}'
+                
+                # Create a BytesIO object from the response content
+                file_data = BytesIO(response.content)
+                file_data.seek(0)
+                
+                # Determine mimetype from URL extension
+                if file_info.lower().endswith('.pdf'):
+                    mimetype = 'application/pdf'
+                elif file_info.lower().endswith(('.jpg', '.jpeg')):
+                    mimetype = 'image/jpeg'
+                elif file_info.lower().endswith('.png'):
+                    mimetype = 'image/png'
+                elif file_info.lower().endswith('.gif'):
+                    mimetype = 'image/gif'
+                elif file_info.lower().endswith('.webp'):
+                    mimetype = 'image/webp'
+                else:
+                    mimetype = 'application/octet-stream'
+                
+                print(f"✅ Successfully downloaded {filename} ({len(response.content)} bytes)")
+                
+                return send_file(
+                    file_data,
+                    as_attachment=True,
+                    download_name=filename,
+                    mimetype=mimetype
+                )
+                
+            except requests.exceptions.RequestException as e:
+                print(f"❌ Error downloading from Cloudinary URL: {str(e)}")
+                # Fallback: redirect to the URL
+                return redirect(file_info)
+            except Exception as e:
+                print(f"❌ Error processing Cloudinary URL: {str(e)}")
+                return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
+        
+        # Handle local files
+        elif isinstance(file_info, str) and os.path.exists(file_info):
+            return send_file(file_info, as_attachment=True)
+        else:
             return jsonify({'error': 'File not found on server'}), 404
         
-        return send_file(file_path, as_attachment=True)
+    except Exception as e:
+        print(f"❌ Download error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@client_bp.route('/clients/<client_id>/preview/<document_type>')
+@jwt_required()
+def preview_document(client_id, document_type):
+    """Preview endpoint that serves files for inline viewing (not download)"""
+    try:
+        from flask import redirect
+        
+        client = clients_collection.find_one({'_id': ObjectId(client_id)})
+        
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+        
+        if document_type not in client.get('documents', {}):
+            return jsonify({'error': 'Document not found'}), 404
+        
+        file_info = client['documents'][document_type]
+        
+        # Handle Cloudinary files - for preview, we can redirect directly
+        if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
+            cloudinary_url = file_info['url']
+            # For images and PDFs, redirect directly to Cloudinary for preview
+            return redirect(cloudinary_url)
+        
+        # Handle string URLs (direct Cloudinary URLs)
+        elif isinstance(file_info, str) and file_info.startswith('https://res.cloudinary.com'):
+            # Direct redirect to Cloudinary URL for preview
+            return redirect(file_info)
+        
+        # Handle local files
+        elif isinstance(file_info, str) and os.path.exists(file_info):
+            # Determine mimetype for inline viewing
+            file_ext = os.path.splitext(file_info)[1].lower()
+            if file_ext == '.pdf':
+                mimetype = 'application/pdf'
+            elif file_ext in ['.jpg', '.jpeg']:
+                mimetype = 'image/jpeg'
+            elif file_ext == '.png':
+                mimetype = 'image/png'
+            elif file_ext == '.gif':
+                mimetype = 'image/gif'
+            elif file_ext == '.webp':
+                mimetype = 'image/webp'
+            else:
+                mimetype = 'application/octet-stream'
+            
+            return send_file(file_info, mimetype=mimetype)
+        else:
+            return jsonify({'error': 'File not found'}), 404
         
     except Exception as e:
+        print(f"❌ Preview error: {str(e)}")
         return jsonify({'error': str(e)}), 500
