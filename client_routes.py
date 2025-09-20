@@ -506,10 +506,28 @@ def get_clients():
         print("=== GET CLIENTS DEBUG ===")
         print("JWT required endpoint accessed")
         
+        # Get JWT claims for debugging
+        claims = get_jwt()
+        current_user_id = get_jwt_identity()
+        user_role = claims.get('role', 'user')
+        user_email = claims.get('email', current_user_id)
+        
+        print(f"User ID: {current_user_id}")
+        print(f"User Role: {user_role}")
+        print(f"User Email: {user_email}")
+        
         # Check database connection first
         if db is None or clients_collection is None or users_collection is None:
             print("Database connection not available")
-            return jsonify({'error': 'Database connection failed', 'clients': []}), 500
+            return jsonify({
+                'error': 'Database connection failed', 
+                'clients': [],
+                'debug_info': {
+                    'user_id': current_user_id,
+                    'user_role': user_role,
+                    'db_status': 'disconnected'
+                }
+            }), 500
         
         try:
             db.command("ping")

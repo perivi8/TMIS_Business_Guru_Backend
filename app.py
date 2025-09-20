@@ -65,7 +65,14 @@ if flask_env == 'production':
         "https://tmis-business-guru-frontend-perivihks-projects.vercel.app",
         # Add common Vercel patterns for your username
         "https://tmis-business-guru-perivihk.vercel.app",
-        "https://tmis-business-guru-git-main-perivihk.vercel.app"
+        "https://tmis-business-guru-git-main-perivihk.vercel.app",
+        # Add more comprehensive patterns for Angular deployment
+        "https://tmis-business-guru-frontend-git-main-perivihks-projects.vercel.app",
+        "https://tmis-business-guru-angular.vercel.app",
+        "https://tmis-business-guru-angular-git-main.vercel.app",
+        "https://tmis-business-guru-angular-perivihks-projects.vercel.app",
+        # Add wildcard patterns for any Vercel subdomain
+        "https://*.vercel.app"
     ]
     allowed_origins.extend(vercel_domains)
     print(f"🔧 Production mode: Added Vercel domains to CORS")
@@ -86,16 +93,20 @@ cors.init_app(
                 "X-Requested-With",
                 "Accept",
                 "Origin",
-                "Cache-Control"
+                "Cache-Control",
+                "X-Forwarded-For",
+                "X-Real-IP"
             ],
             "supports_credentials": True,
             "expose_headers": [
                 "Content-Disposition",
-                "Authorization"
+                "Authorization",
+                "Access-Control-Allow-Origin"
             ],
             "send_wildcard": False,
             "always_send": True,
-            "automatic_options": True
+            "automatic_options": True,
+            "max_age": 86400  # Cache preflight for 24 hours
         }
     }
 )
@@ -636,6 +647,21 @@ def test_routes():
     except Exception as e:
         print(f"Routes test error: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/debug/cors', methods=['GET', 'OPTIONS'])
+def debug_cors():
+    """Debug CORS configuration and request headers"""
+    origin = request.headers.get('Origin', 'No Origin Header')
+    
+    return jsonify({
+        'message': 'CORS Debug Endpoint',
+        'request_origin': origin,
+        'allowed_origins': allowed_origins,
+        'request_headers': dict(request.headers),
+        'cors_configured': True,
+        'flask_env': os.getenv('FLASK_ENV', 'development'),
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
 
 @app.route('/api/debug/production', methods=['GET'])
 def debug_production():
