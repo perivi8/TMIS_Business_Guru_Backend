@@ -1132,7 +1132,7 @@ def delete_client(client_id):
 @jwt_required()
 def download_document(client_id, document_type):
     try:
-        from flask import redirect
+        from flask import redirect, Response
         import requests
         from io import BytesIO
         
@@ -1157,9 +1157,8 @@ def download_document(client_id, document_type):
                 response = requests.get(cloudinary_url, stream=True, timeout=30)
                 response.raise_for_status()
                 
-                # Create a BytesIO object from the response content
-                file_data = BytesIO(response.content)
-                file_data.seek(0)
+                # Get the file content
+                file_content = response.content
                 
                 # Determine the correct mimetype
                 file_format = file_info.get('format', '').lower()
@@ -1176,15 +1175,23 @@ def download_document(client_id, document_type):
                 else:
                     mimetype = 'application/octet-stream'
                 
-                print(f"✅ Successfully downloaded {original_filename} ({len(response.content)} bytes)")
+                print(f"✅ Successfully downloaded {original_filename} ({len(file_content)} bytes)")
+                print(f"📄 File format: {file_format}, MIME type: {mimetype}")
                 
-                # Return the file with proper headers
-                return send_file(
-                    file_data,
-                    as_attachment=True,
-                    download_name=original_filename,
-                    mimetype=mimetype
+                # Create proper response with headers for PDF download
+                response = Response(
+                    file_content,
+                    mimetype=mimetype,
+                    headers={
+                        'Content-Disposition': f'attachment; filename="{original_filename}"',
+                        'Content-Length': str(len(file_content)),
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
                 )
+                
+                return response
                 
             except requests.exceptions.RequestException as e:
                 print(f"❌ Error downloading from Cloudinary: {str(e)}")
@@ -1204,9 +1211,8 @@ def download_document(client_id, document_type):
                 # Extract filename from URL or use document type
                 filename = f'{document_type}.{file_info.split(".")[-1] if "." in file_info else "bin"}'
                 
-                # Create a BytesIO object from the response content
-                file_data = BytesIO(response.content)
-                file_data.seek(0)
+                # Get the file content
+                file_content = response.content
                 
                 # Determine mimetype from URL extension
                 if file_info.lower().endswith('.pdf'):
@@ -1222,14 +1228,23 @@ def download_document(client_id, document_type):
                 else:
                     mimetype = 'application/octet-stream'
                 
-                print(f"✅ Successfully downloaded {filename} ({len(response.content)} bytes)")
+                print(f"✅ Successfully downloaded {filename} ({len(file_content)} bytes)")
+                print(f"📄 MIME type: {mimetype}")
                 
-                return send_file(
-                    file_data,
-                    as_attachment=True,
-                    download_name=filename,
-                    mimetype=mimetype
+                # Create proper response with headers for PDF download
+                response = Response(
+                    file_content,
+                    mimetype=mimetype,
+                    headers={
+                        'Content-Disposition': f'attachment; filename="{filename}"',
+                        'Content-Length': str(len(file_content)),
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0'
+                    }
                 )
+                
+                return response
                 
             except requests.exceptions.RequestException as e:
                 print(f"❌ Error downloading from Cloudinary URL: {str(e)}")
