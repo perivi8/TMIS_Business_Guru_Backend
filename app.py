@@ -746,4 +746,176 @@ def debug_production():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+# Import and register client routes
+try:
+    print("🔄 Importing client routes...")
+    from client_routes import client_bp
+    app.register_blueprint(client_bp, url_prefix='/api')
+    print("✅ Client routes registered successfully")
+except Exception as e:
+    print(f"❌ Error importing client routes: {e}")
+    
+    # Create a simple fallback client endpoint
+    @app.route('/api/clients', methods=['GET'])
+    @jwt_required()
+    def get_clients_fallback():
+        try:
+            print("=== FALLBACK CLIENTS ENDPOINT ===")
+            
+            # Get JWT claims for debugging
+            claims = get_jwt()
+            current_user_id = get_jwt_identity()
+            user_role = claims.get('role', 'user')
+            user_email = claims.get('email', current_user_id)
+            
+            print(f"User ID: {current_user_id}")
+            print(f"User Role: {user_role}")
+            print(f"User Email: {user_email}")
+            
+            # Check database connection
+            if db is None or clients_collection is None:
+                print("Database connection not available")
+                return jsonify({
+                    'error': 'Database connection failed', 
+                    'clients': [],
+                    'fallback': True,
+                    'debug_info': {
+                        'user_id': current_user_id,
+                        'user_role': user_role,
+                        'db_status': 'disconnected'
+                    }
+                }), 500
+            
+            try:
+                db.command("ping")
+                print("Database connection successful")
+            except Exception as db_error:
+                print(f"Database connection failed: {str(db_error)}")
+                return jsonify({'error': 'Database connection failed', 'clients': []}), 500
+            
+            # Get clients from database
+            try:
+                if user_role == 'admin':
+                    # Admin can see all clients
+                    clients_cursor = clients_collection.find()
+                    print("Admin user - fetching all clients")
+                else:
+                    # Regular users see only their clients
+                    clients_cursor = clients_collection.find({'created_by': current_user_id})
+                    print(f"Regular user - fetching clients for: {current_user_id}")
+                
+                clients_list = []
+                for client in clients_cursor:
+                    # Convert ObjectId to string
+                    client['_id'] = str(client['_id'])
+                    clients_list.append(client)
+                
+                print(f"Found {len(clients_list)} clients")
+                
+                return jsonify({
+                    'clients': clients_list,
+                    'fallback': True,
+                    'message': 'Using fallback endpoint - client_routes import failed',
+                    'count': len(clients_list)
+                }), 200
+                
+            except Exception as db_error:
+                print(f"Database query error: {str(db_error)}")
+                return jsonify({
+                    'error': f'Database query failed: {str(db_error)}',
+                    'clients': [],
+                    'fallback': True
+                }), 500
+                
+        except Exception as fallback_error:
+            print(f"Fallback endpoint error: {str(fallback_error)}")
+            return jsonify({
+                'error': f'Fallback endpoint failed: {str(fallback_error)}',
+                'clients': [],
+                'fallback': True
+            }), 500
+
+# Import and register enquiry routes
+try:
+    print("🔄 Importing enquiry routes...")
+    from enquiry_routes import enquiry_bp
+    app.register_blueprint(enquiry_bp, url_prefix='/api')
+    print("✅ Enquiry routes registered successfully")
+except Exception as e:
+    print(f"❌ Error importing enquiry routes: {e}")
+    
+    # Create a simple fallback enquiry endpoint
+    @app.route('/api/enquiries', methods=['GET'])
+    @jwt_required()
+    def get_enquiries_fallback():
+        try:
+            print("=== FALLBACK ENQUIRIES ENDPOINT ===")
+            
+            # Get JWT claims for debugging
+            claims = get_jwt()
+            current_user_id = get_jwt_identity()
+            user_role = claims.get('role', 'user')
+            
+            print(f"User ID: {current_user_id}")
+            print(f"User Role: {user_role}")
+            
+            # Check database connection
+            if db is None:
+                return jsonify({
+                    'error': 'Database connection failed', 
+                    'enquiries': [],
+                    'fallback': True
+                }), 500
+            
+            try:
+                db.command("ping")
+                print("Database connection successful")
+            except Exception as db_error:
+                print(f"Database connection failed: {str(db_error)}")
+                return jsonify({'error': 'Database connection failed', 'enquiries': []}), 500
+            
+            # Get enquiries from database
+            try:
+                enquiries_collection = db.enquiries
+                
+                if user_role == 'admin':
+                    # Admin can see all enquiries
+                    enquiries_cursor = enquiries_collection.find()
+                    print("Admin user - fetching all enquiries")
+                else:
+                    # Regular users see only their enquiries
+                    enquiries_cursor = enquiries_collection.find({'created_by': current_user_id})
+                    print(f"Regular user - fetching enquiries for: {current_user_id}")
+                
+                enquiries_list = []
+                for enquiry in enquiries_cursor:
+                    # Convert ObjectId to string
+                    enquiry['_id'] = str(enquiry['_id'])
+                    enquiries_list.append(enquiry)
+                
+                print(f"Found {len(enquiries_list)} enquiries")
+                
+                return jsonify({
+                    'enquiries': enquiries_list,
+                    'fallback': True,
+                    'message': 'Using fallback endpoint - enquiry_routes import failed',
+                    'count': len(enquiries_list)
+                }), 200
+                
+            except Exception as db_error:
+                print(f"Database query error: {str(db_error)}")
+                return jsonify({
+                    'error': f'Database query failed: {str(db_error)}',
+                    'enquiries': [],
+                    'fallback': True
+                }), 500
+                
+        except Exception as fallback_error:
+            print(f"Fallback enquiry endpoint error: {str(fallback_error)}")
+            return jsonify({
+                'error': f'Fallback enquiry endpoint failed: {str(fallback_error)}',
+                'enquiries': [],
+                'fallback': True
+            }), 500
+
 # Export app for main.py to use
