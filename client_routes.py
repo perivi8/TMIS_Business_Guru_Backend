@@ -1377,10 +1377,48 @@ def preview_document(client_id, document_type):
 @jwt_required()
 def download_document_direct(client_id, document_type):
     """
-    Alternative download endpoint that bypasses validation for problematic PDFs
+    Direct download endpoint that simply redirects to Cloudinary URL for maximum compatibility
     """
     try:
-        from flask import redirect, Response
+        client = clients_collection.find_one({'_id': ObjectId(client_id)})
+        
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+        
+        if document_type not in client.get('documents', {}):
+            return jsonify({'error': 'Document not found'}), 404
+        
+        file_info = client['documents'][document_type]
+        
+        # Handle Cloudinary files - direct redirect to Cloudinary URL
+        if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
+            cloudinary_url = file_info['url']
+            print(f"📥 Direct redirect to Cloudinary: {cloudinary_url}")
+            return redirect(cloudinary_url)
+        
+        # Handle string URLs (direct Cloudinary URLs)
+        elif isinstance(file_info, str) and file_info.startswith('https://res.cloudinary.com'):
+            print(f"📥 Direct redirect to Cloudinary URL: {file_info}")
+            return redirect(file_info)
+        
+        # Handle local files
+        elif isinstance(file_info, str) and os.path.exists(file_info):
+            return send_file(file_info, as_attachment=True)
+        else:
+            return jsonify({'error': 'File not found on server'}), 404
+        
+    except Exception as e:
+        print(f"❌ Direct download error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@client_bp.route('/clients/<client_id>/download-raw/<document_type>')
+@jwt_required()
+def download_document_raw(client_id, document_type):
+    """
+    Raw download endpoint that serves the file exactly as stored in Cloudinary
+    """
+    try:
+        from flask import Response
         import requests
         
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
@@ -1393,71 +1431,58 @@ def download_document_direct(client_id, document_type):
         
         file_info = client['documents'][document_type]
         
-        # Handle Cloudinary files - direct download without validation
+        # Handle Cloudinary files - raw download
         if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
             cloudinary_url = file_info['url']
             original_filename = file_info.get('original_filename', f'{document_type}.{file_info.get("format", "bin")}')
             
             try:
-                print(f"📥 Direct download from Cloudinary: {cloudinary_url}")
-                cloudinary_response = requests.get(cloudinary_url, timeout=30, stream=True)
-                cloudinary_response.raise_for_status()
+                print(f"📥 Raw download from Cloudinary: {cloudinary_url}")
                 
-                # Get file content
-                file_content = cloudinary_response.content
-                
-                # Use the format from file_info or detect from URL
-                file_format = file_info.get('format', '').lower()
-                if not file_format:
-                    # Try to detect from URL
-                    if cloudinary_url.lower().find('.pdf') != -1:
-                        file_format = 'pdf'
-                    elif cloudinary_url.lower().find('.jpg') != -1 or cloudinary_url.lower().find('.jpeg') != -1:
-                        file_format = 'jpg'
-                    elif cloudinary_url.lower().find('.png') != -1:
-                        file_format = 'png'
-                
-                # Set MIME type
-                if file_format == 'pdf':
-                    mimetype = 'application/pdf'
-                elif file_format in ['jpg', 'jpeg']:
-                    mimetype = 'image/jpeg'
-                elif file_format == 'png':
-                    mimetype = 'image/png'
-                elif file_format == 'gif':
-                    mimetype = 'image/gif'
-                elif file_format == 'webp':
-                    mimetype = 'image/webp'
-                else:
-                    # Try to get MIME type from Cloudinary response
-                    mimetype = cloudinary_response.headers.get('content-type', 'application/octet-stream')
-                
-                print(f"✅ Direct download successful: {original_filename} ({len(file_content)} bytes)")
-                print(f"📄 MIME type: {mimetype}")
-                
-                # Create response with minimal headers for maximum compatibility
-                response_headers = {
-                    'Content-Disposition': f'attachment; filename="{original_filename}"',
-                    'Content-Type': mimetype,
-                    'Content-Length': str(len(file_content))
-                }
-                
-                flask_response = Response(
-                    file_content,
-                    mimetype=mimetype,
-                    headers=response_headers
-                )
-                
-                return flask_response
+                # Use requests.get with stream=True to avoid loading entire file into memory
+                with requests.get(cloudinary_url, timeout=30, stream=True) as cloudinary_response:
+                    cloudinary_response.raise_for_status()
+                    
+                    # Get content type from Cloudinary response
+                    content_type = cloudinary_response.headers.get('content-type', 'application/octet-stream')
+                    content_length = cloudinary_response.headers.get('content-length')
+                    
+                    print(f"📄 Content-Type from Cloudinary: {content_type}")
+                    print(f"📏 Content-Length: {content_length}")
+                    
+                    # Create a generator to stream the content
+                    def generate():
+                        for chunk in cloudinary_response.iter_content(chunk_size=8192):
+                            if chunk:
+                                yield chunk
+                    
+                    # Create response with headers that preserve the original file
+                    response_headers = {
+                        'Content-Disposition': f'attachment; filename="{original_filename}"',
+                        'Content-Type': content_type,
+                    }
+                    
+                    if content_length:
+                        response_headers['Content-Length'] = content_length
+                    
+                    flask_response = Response(
+                        generate(),
+                        mimetype=content_type,
+                        headers=response_headers
+                    )
+                    
+                    print(f"✅ Raw download initiated: {original_filename}")
+                    return flask_response
                 
             except Exception as e:
-                print(f"❌ Error in direct download: {str(e)}")
-                # Final fallback: redirect to Cloudinary URL
+                print(f"❌ Error in raw download: {str(e)}")
+                # Fallback: redirect to Cloudinary URL
+                from flask import redirect
                 return redirect(cloudinary_url)
         
         # Handle string URLs (direct Cloudinary URLs)
         elif isinstance(file_info, str) and file_info.startswith('https://res.cloudinary.com'):
-            # Direct redirect for string URLs
+            from flask import redirect
             return redirect(file_info)
         
         # Handle local files
@@ -1467,5 +1492,5 @@ def download_document_direct(client_id, document_type):
             return jsonify({'error': 'File not found on server'}), 404
         
     except Exception as e:
-        print(f"❌ Direct download error: {str(e)}")
+        print(f"❌ Raw download error: {str(e)}")
         return jsonify({'error': str(e)}), 500
