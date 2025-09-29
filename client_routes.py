@@ -851,13 +851,17 @@ def update_client_details(client_id):
                 'mobile_number', 'business_name', 'business_type', 'constitution_type',
                 'gst_number', 'gst_status', 'business_pan', 'ie_code', 'website',
                 'address', 'district', 'state', 'pincode', 'business_address',
-                'bank_name', 'account_number', 'ifsc_code', 'account_type',
+                'bank_name', 'account_name', 'account_number', 'ifsc_code', 'account_type',
                 'bank_type', 'new_current_account', 'gateway', 'loan_purpose',
                 'repayment_period', 'existing_loans', 'registration_number',
                 'gst_legal_name', 'gst_trade_name', 'business_pan_name', 
                 'business_pan_date', 'owner_name', 'owner_dob', 'has_business_pan',
                 'business_url', 'feedback', 'status', 'new_business_account',
-                'transaction_months'
+                'transaction_months',
+                # New bank details fields
+                'new_bank_account_number', 'new_ifsc_code', 'new_account_name', 'new_bank_name',
+                # Payment gateways field
+                'payment_gateways'
             ]
             
             for field in text_fields:

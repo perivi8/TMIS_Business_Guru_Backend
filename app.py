@@ -204,34 +204,111 @@ def cors_debug():
         'timestamp': datetime.utcnow().isoformat()
     }), 200
 
-# Handle preflight OPTIONS requests
+@app.route('/api/validate-token', methods=['GET'])
+@jwt_required()
+def validate_token():
+    """Endpoint to validate JWT token and return user info"""
+    try:
+        current_user_id = get_jwt_identity()
+        claims = get_jwt()
+        
+        print(f"=== TOKEN VALIDATION ===")
+        print(f"User ID: {current_user_id}")
+        print(f"Claims: {claims}")
+        
+        return jsonify({
+            'valid': True,
+            'user_id': current_user_id,
+            'claims': claims,
+            'message': 'Token is valid',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        print(f"Token validation error: {e}")
+        return jsonify({
+            'valid': False,
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 401
+
+# Handle preflight OPTIONS requests and log protected endpoints
 @app.before_request
-def handle_preflight():
+def handle_requests():
+    # Handle preflight OPTIONS requests
     if request.method == "OPTIONS":
         # Let Flask-CORS handle the OPTIONS request
         # Don't add any manual headers here as it causes duplicates
         return '', 200
+    
+    # Log protected endpoint requests for debugging
+    if request.endpoint and any(protected in request.path for protected in ['/api/team', '/api/clients']):
+        print(f"=== PROTECTED ENDPOINT REQUEST ===")
+        print(f"Path: {request.path}")
+        print(f"Method: {request.method}")
+        print(f"Authorization header: {request.headers.get('Authorization', 'Missing')}")
+        print(f"Origin: {request.headers.get('Origin', 'No origin')}")
+        print(f"User-Agent: {request.headers.get('User-Agent', 'No user agent')}")
+        
+        # Check if token is present and valid format
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            token = auth_header.split(' ')[1]
+            print(f"Token present: {token[:20]}...{token[-10:] if len(token) > 30 else token}")
+        else:
+            print("No Bearer token found in Authorization header")
 
-# JWT Error Handlers
+# JWT Error Handlers with enhanced debugging
 @jwt.expired_token_loader
 def expired_token_callback(jwt_header, jwt_payload):
-    print("JWT Token expired")
-    return jsonify({'msg': 'Token has expired'}), 401
+    print("=== JWT TOKEN EXPIRED ===")
+    print(f"Header: {jwt_header}")
+    print(f"Payload: {jwt_payload}")
+    print(f"Expired at: {jwt_payload.get('exp', 'Unknown')}")
+    return jsonify({
+        'msg': 'Token has expired', 
+        'error': 'expired_token',
+        'timestamp': datetime.utcnow().isoformat()
+    }), 401
 
 @jwt.invalid_token_loader
 def invalid_token_callback(error):
-    print(f"JWT Invalid token: {error}")
-    return jsonify({'msg': 'Invalid token'}), 422
+    print(f"=== JWT INVALID TOKEN ===")
+    print(f"Error: {error}")
+    print(f"Request headers: {dict(request.headers)}")
+    return jsonify({
+        'msg': 'Invalid token format or signature', 
+        'error': 'invalid_token',
+        'details': str(error)
+    }), 422
 
 @jwt.unauthorized_loader
 def missing_token_callback(error):
-    print(f"JWT Missing token: {error}")
-    return jsonify({'msg': 'Authorization token is required'}), 401
+    print(f"=== JWT MISSING TOKEN ===")
+    print(f"Error: {error}")
+    print(f"Authorization header: {request.headers.get('Authorization', 'Not present')}")
+    print(f"All headers: {dict(request.headers)}")
+    return jsonify({
+        'msg': 'Authorization token is required', 
+        'error': 'missing_token',
+        'hint': 'Include Authorization: Bearer <token> in request headers'
+    }), 401
 
 @jwt.revoked_token_loader
 def revoked_token_callback(jwt_header, jwt_payload):
-    print("JWT Token revoked")
-    return jsonify({'msg': 'Token has been revoked'}), 401
+    print("=== JWT TOKEN REVOKED ===")
+    print(f"Header: {jwt_header}")
+    print(f"Payload: {jwt_payload}")
+    return jsonify({
+        'msg': 'Token has been revoked', 
+        'error': 'revoked_token'
+    }), 401
+
+# Add JWT token validation debugging
+@jwt.additional_claims_loader
+def add_claims_to_jwt(identity):
+    return {'iat': datetime.utcnow().timestamp()}
+
 
 # MongoDB connection
 MONGODB_URI = os.getenv('MONGODB_URI')
