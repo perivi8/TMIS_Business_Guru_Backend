@@ -393,6 +393,13 @@ def create_client():
         # Get form data
         data = request.form.to_dict()
         
+        # Handle payment_gateways JSON parsing
+        if 'payment_gateways' in data:
+            try:
+                data['payment_gateways'] = json.loads(data['payment_gateways']) if data['payment_gateways'] else []
+            except json.JSONDecodeError:
+                data['payment_gateways'] = []
+        
         # Create client data
         client_data = {
             '_id': ObjectId(client_id),
@@ -866,7 +873,16 @@ def update_client_details(client_id):
             
             for field in text_fields:
                 if field in data:
-                    update_data[field] = data[field]
+                    if field == 'payment_gateways':
+                        # Parse payment_gateways from JSON string
+                        try:
+                            payment_gateways_data = json.loads(data[field]) if data[field] else []
+                            update_data[field] = payment_gateways_data
+                        except json.JSONDecodeError:
+                            # If it's not valid JSON, treat as empty array
+                            update_data[field] = []
+                    else:
+                        update_data[field] = data[field]
             
             # Handle partner fields for partnerships
             for i in range(10):
