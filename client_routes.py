@@ -397,8 +397,10 @@ def create_client():
         if 'payment_gateways' in data:
             try:
                 data['payment_gateways'] = json.loads(data['payment_gateways']) if data['payment_gateways'] else []
+                print(f"💾 Creating client with payment_gateways: {data['payment_gateways']}")
             except json.JSONDecodeError:
                 data['payment_gateways'] = []
+                print(f"⚠️ Failed to parse payment_gateways JSON during creation: {data.get('payment_gateways')}")
         
         # Create client data
         client_data = {
@@ -675,6 +677,12 @@ def get_client_details(client_id):
         # Convert ObjectId to string
         client['_id'] = str(client['_id'])
         
+        # Debug payment gateways data
+        print(f"🔍 Client {client_id} payment_gateways data:")
+        print(f"   Type: {type(client.get('payment_gateways'))}")
+        print(f"   Value: {client.get('payment_gateways')}")
+        print(f"   Raw client keys: {list(client.keys())}")
+        
         # Process document paths to be accessible
         if 'documents' in client:
             processed_documents = {}
@@ -864,11 +872,11 @@ def update_client_details(client_id):
                 'gst_legal_name', 'gst_trade_name', 'business_pan_name', 
                 'business_pan_date', 'owner_name', 'owner_dob', 'has_business_pan',
                 'business_url', 'feedback', 'status', 'new_business_account',
-                'transaction_months',
+                'transaction_months', 'loan_status',
                 # New bank details fields
                 'new_bank_account_number', 'new_ifsc_code', 'new_account_name', 'new_bank_name',
-                # Payment gateways field
-                'payment_gateways'
+                # Payment gateways fields
+                'payment_gateways', 'payment_gateways_status'
             ]
             
             for field in text_fields:
@@ -878,11 +886,39 @@ def update_client_details(client_id):
                         try:
                             payment_gateways_data = json.loads(data[field]) if data[field] else []
                             update_data[field] = payment_gateways_data
+                            print(f"💾 Saving payment_gateways: {payment_gateways_data}")
                         except json.JSONDecodeError:
                             # If it's not valid JSON, treat as empty array
                             update_data[field] = []
+                            print(f"⚠️ Failed to parse payment_gateways JSON: {data[field]}")
+                    elif field == 'payment_gateways_status':
+                        # Parse payment_gateways_status from JSON string
+                        try:
+                            gateways_status_data = json.loads(data[field]) if data[field] else {}
+                            update_data[field] = gateways_status_data
+                            print(f"💾 Saving payment_gateways_status: {gateways_status_data}")
+                        except json.JSONDecodeError:
+                            # If it's not valid JSON, treat as empty object
+                            update_data[field] = {}
+                            print(f"⚠️ Failed to parse payment_gateways_status JSON: {data[field]}")
                     else:
                         update_data[field] = data[field]
+                elif field == 'payment_gateways':
+                    # If payment_gateways is not in the data, preserve existing values
+                    # This prevents accidental clearing of payment gateways from non-gateway editing components
+                    print(f"💾 Payment gateways not in update data - preserving existing values")
+                    if field not in update_data and client.get('payment_gateways'):
+                        update_data[field] = client['payment_gateways']
+                elif field == 'payment_gateways_status':
+                    # Similar preservation for payment gateway status  
+                    print(f"💾 Payment gateways status not in update data - preserving existing values")
+                    if field not in update_data and client.get('payment_gateways_status'):
+                        update_data[field] = client['payment_gateways_status']
+                elif field == 'loan_status':
+                    # Preserve loan status if not explicitly updated
+                    print(f"💾 Loan status not in update data - preserving existing values")
+                    if field not in update_data and client.get('loan_status'):
+                        update_data[field] = client['loan_status']
             
             # Handle partner fields for partnerships
             for i in range(10):
@@ -992,6 +1028,19 @@ def update_client_details(client_id):
             # Handle JSON data
             data = request.get_json()
             update_data = data
+        
+        # Only preserve critical fields for JSON requests or when doing general edits
+        # Skip preservation when fields are explicitly being updated (like from FormData)
+        if request.content_type and 'multipart/form-data' not in request.content_type:
+            # This is a JSON request, preserve fields that weren't included
+            critical_fields = ['payment_gateways', 'payment_gateways_status', 'loan_status']
+            for field in critical_fields:
+                if field not in update_data and client.get(field) is not None:
+                    update_data[field] = client[field]
+                    print(f"💾 Preserved existing {field}: {client[field]}")
+        
+        # For FormData requests (like status updates), don't override fields that were explicitly set
+        # The FormData processing above already handles preservation correctly
         
         # Add updated timestamp and updated_by
         update_data['updated_at'] = datetime.utcnow()
