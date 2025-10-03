@@ -74,17 +74,15 @@ if flask_env == 'production':
     ]
     allowed_origins.extend(vercel_domains)
     print(f"🔧 Production mode: Added Vercel domains to CORS")
-else:
-    # For development, be more permissive
-    allowed_origins.append("*")
+# Development mode uses the base allowed_origins list (localhost domains)
 
 print(f"🌐 CORS Allowed Origins: {allowed_origins}")
 print(f"🔧 Flask Environment: {flask_env}")
 
 # Configure CORS with comprehensive settings
-# Use a more permissive approach for production to handle dynamic Vercel URLs
+# Use specific origins for both production and development to support credentials
 cors_config = {
-    "origins": allowed_origins if flask_env != 'production' else "*",
+    "origins": allowed_origins,
     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     "allow_headers": [
         "Content-Type", 
@@ -102,7 +100,7 @@ cors_config = {
         "Authorization",
         "Access-Control-Allow-Origin"
     ],
-    "send_wildcard": flask_env == 'production',
+    "send_wildcard": False,
     "always_send": True,
     "automatic_options": True,
     "max_age": 86400  # Cache preflight for 24 hours
@@ -257,19 +255,19 @@ def handle_requests():
         else:
             print("No Bearer token found in Authorization header")
 
-# Add after_request handler to ensure CORS headers are always present
+# Add after_request handler for additional CORS support
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
     
-    # For production, allow all origins from vercel.app
+    # For production, dynamically allow Vercel origins that aren't in the static list
     if flask_env == 'production' and origin and 'vercel.app' in origin:
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-Forwarded-For, X-Real-IP'
-        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Authorization, Access-Control-Allow-Origin'
-        response.headers['Access-Control-Max-Age'] = '86400'
+        # Only add headers if the origin is not already handled by Flask-CORS
+        if origin not in allowed_origins:
+            # Add the new Vercel origin to allowed list for future requests
+            if origin not in allowed_origins:
+                allowed_origins.append(origin)
+                print(f"🔄 Added new Vercel origin: {origin}")
     
     return response
 
