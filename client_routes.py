@@ -402,6 +402,19 @@ def create_client():
                 data['payment_gateways'] = []
                 print(f"⚠️ Failed to parse payment_gateways JSON during creation: {data.get('payment_gateways')}")
         
+        # Ensure default payment gateways are set if not provided
+        if 'payment_gateways' not in data or not data['payment_gateways']:
+            data['payment_gateways'] = ['Cashfree', 'Easebuzz']
+            print(f"💾 Setting default payment gateways for new client: {data['payment_gateways']}")
+        
+        # Ensure payment gateway status is initialized
+        if 'payment_gateways_status' not in data or not data['payment_gateways_status']:
+            data['payment_gateways_status'] = {
+                'Cashfree': 'pending',
+                'Easebuzz': 'pending'
+            }
+            print(f"💾 Setting default payment gateway status for new client: {data['payment_gateways_status']}")
+        
         # Create client data
         client_data = {
             '_id': ObjectId(client_id),
@@ -821,6 +834,25 @@ def update_client(client_id):
 @jwt_required()
 def update_client_details(client_id):
     try:
+        print(f"=== CLIENT UPDATE REQUEST ===")
+        print(f"Client ID: {client_id}")
+        print(f"Method: {request.method}")
+        print(f"Content-Type: {request.content_type}")
+        print(f"Origin: {request.headers.get('Origin', 'No origin')}")
+        
+        # Check database connection first
+        if db is None or clients_collection is None:
+            print(f"❌ Database connection not available")
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Test database connection
+        try:
+            db.command("ping")
+            print(f"✅ Database connection verified")
+        except Exception as db_error:
+            print(f"❌ Database ping failed: {str(db_error)}")
+            return jsonify({'error': 'Database connection failed'}), 500
+        
         claims = get_jwt()
         user_role = claims.get('role')
         current_user_id = claims.get('sub')
@@ -1042,6 +1074,19 @@ def update_client_details(client_id):
         # For FormData requests (like status updates), don't override fields that were explicitly set
         # The FormData processing above already handles preservation correctly
         
+        # Ensure default payment gateways are set if not already present
+        if 'payment_gateways' not in update_data and not client.get('payment_gateways'):
+            update_data['payment_gateways'] = ['Cashfree', 'Easebuzz']
+            print(f"💾 Setting default payment gateways: {update_data['payment_gateways']}")
+        
+        # Ensure payment gateway status is initialized for default gateways
+        if 'payment_gateways_status' not in update_data and not client.get('payment_gateways_status'):
+            update_data['payment_gateways_status'] = {
+                'Cashfree': 'pending',
+                'Easebuzz': 'pending'
+            }
+            print(f"💾 Setting default payment gateway status: {update_data['payment_gateways_status']}")
+        
         # Add updated timestamp and updated_by
         update_data['updated_at'] = datetime.utcnow()
         update_data['updated_by'] = current_user_id
@@ -1071,9 +1116,14 @@ def update_client_details(client_id):
                     update_type="updated"
                 )
         
+        print(f"✅ Client update completed successfully")
         return jsonify({'message': 'Client updated successfully'}), 200
         
     except Exception as e:
+        print(f"❌ Error in update_client_details: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 @client_bp.route('/clients/<client_id>', methods=['DELETE'])

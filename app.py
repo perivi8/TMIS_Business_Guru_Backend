@@ -70,46 +70,45 @@ if flask_env == 'production':
         "https://tmis-business-guru-frontend-git-main-perivihks-projects.vercel.app",
         "https://tmis-business-guru-angular.vercel.app",
         "https://tmis-business-guru-angular-git-main.vercel.app",
-        "https://tmis-business-guru-angular-perivihks-projects.vercel.app",
-        # Add wildcard patterns for any Vercel subdomain
-        "https://*.vercel.app"
+        "https://tmis-business-guru-angular-perivihks-projects.vercel.app"
     ]
     allowed_origins.extend(vercel_domains)
     print(f"🔧 Production mode: Added Vercel domains to CORS")
+else:
+    # For development, be more permissive
+    allowed_origins.append("*")
 
 print(f"🌐 CORS Allowed Origins: {allowed_origins}")
 print(f"🔧 Flask Environment: {flask_env}")
 
 # Configure CORS with comprehensive settings
-cors.init_app(
-    app,
-    resources={
-        r"/*": {
-            "origins": allowed_origins,
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
-            "allow_headers": [
-                "Content-Type", 
-                "Authorization", 
-                "X-Requested-With",
-                "Accept",
-                "Origin",
-                "Cache-Control",
-                "X-Forwarded-For",
-                "X-Real-IP"
-            ],
-            "supports_credentials": True,
-            "expose_headers": [
-                "Content-Disposition",
-                "Authorization",
-                "Access-Control-Allow-Origin"
-            ],
-            "send_wildcard": False,
-            "always_send": True,
-            "automatic_options": True,
-            "max_age": 86400  # Cache preflight for 24 hours
-        }
-    }
-)
+# Use a more permissive approach for production to handle dynamic Vercel URLs
+cors_config = {
+    "origins": allowed_origins if flask_env != 'production' else "*",
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
+    "allow_headers": [
+        "Content-Type", 
+        "Authorization", 
+        "X-Requested-With",
+        "Accept",
+        "Origin",
+        "Cache-Control",
+        "X-Forwarded-For",
+        "X-Real-IP"
+    ],
+    "supports_credentials": True,
+    "expose_headers": [
+        "Content-Disposition",
+        "Authorization",
+        "Access-Control-Allow-Origin"
+    ],
+    "send_wildcard": flask_env == 'production',
+    "always_send": True,
+    "automatic_options": True,
+    "max_age": 86400  # Cache preflight for 24 hours
+}
+
+cors.init_app(app, resources={r"/*": cors_config})
 jwt = JWTManager(app)
 
 # Health check endpoint (no JWT required)
@@ -257,6 +256,22 @@ def handle_requests():
             print(f"Token present: {token[:20]}...{token[-10:] if len(token) > 30 else token}")
         else:
             print("No Bearer token found in Authorization header")
+
+# Add after_request handler to ensure CORS headers are always present
+@app.after_request
+def after_request(response):
+    origin = request.headers.get('Origin')
+    
+    # For production, allow all origins from vercel.app
+    if flask_env == 'production' and origin and 'vercel.app' in origin:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, Accept, Origin, Cache-Control, X-Forwarded-For, X-Real-IP'
+        response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, Authorization, Access-Control-Allow-Origin'
+        response.headers['Access-Control-Max-Age'] = '86400'
+    
+    return response
 
 # JWT Error Handlers with enhanced debugging
 @jwt.expired_token_loader
