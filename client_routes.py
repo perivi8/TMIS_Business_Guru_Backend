@@ -1117,7 +1117,12 @@ def update_client_details(client_id):
                 )
         
         print(f"✅ Client update completed successfully")
-        return jsonify({'message': 'Client updated successfully'}), 200
+        return jsonify({
+            'success': True,
+            'message': 'Client updated successfully',
+            'client_id': client_id,
+            'updated_fields': list(update_data.keys())
+        }), 200
         
     except Exception as e:
         print(f"❌ Error in update_client_details: {str(e)}")
