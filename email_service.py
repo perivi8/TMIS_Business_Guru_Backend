@@ -116,6 +116,18 @@ class EmailService:
         
         return status_colors.get(status.lower(), "#6c757d")  # Default gray
     
+    def _get_loan_status_color(self, loan_status):
+        """Get color for loan status badge based on loan status value"""
+        loan_status_colors = {
+            'approved': "#28a745",  # Green
+            'processing': "#17a2b8",  # Blue
+            'hold': "#ffc107",  # Orange
+            'rejected': "#dc3545",  # Red
+            'soon': "#6c757d",  # Gray
+        }
+        
+        return loan_status_colors.get(loan_status.lower(), "#6c757d")  # Default gray
+    
     def _create_tmis_email_template(self, client_data, admin_name, update_type):
         """Create HTML email template for TMIS users"""
         
@@ -182,6 +194,11 @@ class EmailService:
                         <div class="info-row">
                             <span class="info-label">Status:</span>
                             <span class="status-badge" style="background-color: {self._get_status_color(client_data.get('status', ''))};">{client_data.get('status', 'N/A')}</span>
+                        </div>
+                        
+                        <div class="info-row">
+                            <span class="info-label">Loan Status:</span>
+                            <span class="status-badge" style="background-color: {self._get_loan_status_color(client_data.get('loan_status', 'soon'))};">{client_data.get('loan_status', 'soon').title()}</span>
                         </div>
                         
                         {f'''<div class="info-row">
@@ -280,6 +297,11 @@ class EmailService:
                         <div class="info-row">
                             <span class="info-label">Status:</span>
                             <span class="status-badge" style="background-color: {self._get_status_color(client_data.get('status', ''))};">{client_data.get('status', 'N/A')}</span>
+                        </div>
+                        
+                        <div class="info-row">
+                            <span class="info-label">Loan Status:</span>
+                            <span class="status-badge" style="background-color: {self._get_loan_status_color(client_data.get('loan_status', 'soon'))};">{client_data.get('loan_status', 'soon').title()}</span>
                         </div>
                         
                         {f'''<div class="info-row">
