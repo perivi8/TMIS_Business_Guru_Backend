@@ -89,13 +89,20 @@ cors.init_app(app, resources={
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
         "allow_headers": [
             "Content-Type", 
+            "content-type",
             "Authorization", 
+            "authorization",
             "X-Requested-With",
             "Accept",
+            "accept",
             "Origin",
+            "origin",
             "Cache-Control",
             "X-Forwarded-For",
-            "X-Real-IP"
+            "X-Real-IP",
+            "Access-Control-Allow-Headers",
+            "Access-Control-Request-Method",
+            "Access-Control-Request-Headers"
         ],
         "supports_credentials": True,
         "expose_headers": [
@@ -253,9 +260,9 @@ def validate_token():
 def handle_requests():
     # Handle preflight OPTIONS requests
     if request.method == "OPTIONS":
-        # Let Flask-CORS handle the OPTIONS request
+        # Let Flask-CORS handle the OPTIONS request completely
         # Don't add any manual headers here as it causes duplicates
-        return '', 200
+        return
     
     # Log protected endpoint requests for debugging
     if request.endpoint and any(protected in request.path for protected in ['/api/team', '/api/clients']):
@@ -276,19 +283,23 @@ def handle_requests():
 
 # Add after_request handler for additional CORS support
 @app.after_request
-def after_request(response):
-    origin = request.headers.get('Origin')
-    
-    # For production, dynamically allow Vercel origins that aren't in the static list
-    if flask_env == 'production' and origin and 'vercel.app' in origin:
-        # Only add headers if the origin is not already handled by Flask-CORS
-        if origin not in allowed_origins:
-            # Add the new Vercel origin to allowed list for future requests
+def after_request_cors_handler(response):
+    """Handle dynamic CORS for Vercel deployments and add debug info"""
+    try:
+        origin = request.headers.get('Origin')
+        
+        # For production, dynamically allow Vercel origins that aren't in the static list
+        if flask_env == 'production' and origin and 'vercel.app' in origin:
+            # Only add headers if the origin is not already handled by Flask-CORS
             if origin not in allowed_origins:
+                # Add the new Vercel origin to allowed list for future requests
                 allowed_origins.append(origin)
                 print(f"🔄 Added new Vercel origin: {origin}")
-    
-    return response
+        
+        return response
+    except Exception as e:
+        print(f"CORS after_request error: {e}")
+        return response
 
 # JWT Error Handlers with enhanced debugging
 @jwt.expired_token_loader
@@ -644,21 +655,6 @@ def get_users():
         print(f"Get users error: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.after_request
-def after_request(response):
-    """Add CORS headers to all responses"""
-    try:
-        origin = request.headers.get('Origin')
-        
-        # Handle Vercel preview deployments dynamically
-        if origin and 'vercel.app' in origin:
-            response.headers['Access-Control-Allow-Origin'] = origin
-            print(f"Added CORS for Vercel origin: {origin}")
-        
-        return response
-    except Exception as e:
-        print(f"CORS after_request error: {e}")
-        return response
 
 @app.before_request
 def check_deleted_users():
@@ -674,6 +670,11 @@ def check_deleted_users():
             
         # Get the authorization header
         auth_header = request.headers.get('Authorization')
+        
+        # Check if auth header exists and has the right format
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return
+            
         # Extract token
         token = auth_header.split(' ')[1]
         
