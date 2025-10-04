@@ -444,8 +444,8 @@ api_routes_found = []
 for rule in app.url_map.iter_rules():
     rule_str = str(rule)
     if rule_str.startswith('/api/'):
-        api_routes_found.append(f"{rule_str} -> {rule.endpoint} ({list(rule.methods)})")
-        print(f"✅ Found API route: {rule_str} -> {rule.endpoint} ({list(rule.methods)})")
+        api_routes_found.append(f"{rule_str} -> {rule.endpoint} ({list(rule.methods or [])})")
+        print(f"✅ Found API route: {rule_str} -> {rule.endpoint} ({list(rule.methods or [])})")
 
 if not api_routes_found:
     print("❌ WARNING: No /api/ routes found!")
@@ -490,4 +490,9 @@ if __name__ == '__main__':
     print(f"Debug mode: {debug}")
     print(f"Environment: {os.environ.get('FLASK_ENV', 'development')}")
     
-    app.run(debug=debug, host='0.0.0.0', port=port)
+    # Import socketio and run with SocketIO support
+    from app import socketio
+    if os.environ.get('FLASK_ENV') == 'production':
+        socketio.run(app, host='0.0.0.0', port=port, debug=False, log_output=False)
+    else:
+        socketio.run(app, host='0.0.0.0', port=port, debug=debug)

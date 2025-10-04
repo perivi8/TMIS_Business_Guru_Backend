@@ -16,7 +16,7 @@ if [ -z "$MONGODB_URI" ]; then
 fi
 
 echo "✅ MongoDB URI is set"
-echo "✅ Starting gunicorn server..."
+echo "✅ Starting TMIS Business Guru Backend with SocketIO support..."
 
-# Start the application
-exec gunicorn -c gunicorn.conf.py main:app
+# Start the application with SocketIO support
+exec python start_server.py

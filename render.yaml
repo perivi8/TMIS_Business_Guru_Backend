@@ -3,7 +3,7 @@ services:
     name: tmis-business-guru-backend
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 main:app
+    startCommand: python start_server.py
     envVars:
       - key: MONGODB_URI
         value: mongodb+srv://perivihk_db_user:perivihk_db_user@cluster0.5kqbeaz.mongodb.net/tmis_business_guru?retryWrites=true&w=majority&appName=Cluster0

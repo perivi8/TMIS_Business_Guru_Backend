@@ -1936,7 +1936,18 @@ def test_greenapi_endpoint():
 
 # Main execution
 if __name__ == '__main__':
-    print("🚀 Starting TMIS Business Guru Backend with SocketIO...")
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV', 'development') == 'development'
+    
+    print(f"🚀 Starting TMIS Business Guru Backend with SocketIO...")
+    print(f"Port: {port}")
+    print(f"Debug: {debug}")
+    print(f"Environment: {os.environ.get('FLASK_ENV', 'development')}")
+    
+    # For production, use production settings
+    if os.environ.get('FLASK_ENV') == 'production':
+        socketio.run(app, host='0.0.0.0', port=port, debug=False, log_output=False)
+    else:
+        socketio.run(app, host='0.0.0.0', port=port, debug=debug)
 
 # Export app for main.py to use
