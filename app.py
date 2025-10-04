@@ -1,19 +1,21 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, get_jwt
-from werkzeug.utils import secure_filename
-import os
-import sys
-from dotenv import load_dotenv
-import smtplib
-from datetime import datetime, timedelta
-import PyPDF2
-import json
-import re
+from flask_socketio import SocketIO, emit, join_room, leave_room
+import bcrypt
 from pymongo import MongoClient
 from bson import ObjectId
+import os
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+import smtplib
+import email.mime.text
+import email.mime.multipart
+import sys
+import uuid
+import threading
+import time
 from bson.json_util import dumps
-import bcrypt
 
 # Load environment variables
 load_dotenv()
@@ -108,6 +110,23 @@ cors_config = {
 
 cors.init_app(app, resources={r"/*": cors_config})
 jwt = JWTManager(app)
+
+# Initialize SocketIO with CORS support
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*",  # Allow all origins for development
+    async_mode='threading',
+    logger=False,
+    engineio_logger=False,
+    transports=['polling', 'websocket'],
+    allow_upgrades=True,
+    ping_timeout=60,
+    ping_interval=25
+)
+
+# Store for pending approval requests
+pending_approvals = {}
+admin_sessions = {}
 
 # Health check endpoint (no JWT required)
 @app.route('/', methods=['GET'])
@@ -344,12 +363,14 @@ try:
     # Initialize collections
     users_collection = db.users
     clients_collection = db.clients
+    pending_registrations_collection = db.pending_registrations
     
     # Test collections access
     try:
         user_count = users_collection.count_documents({})
         client_count = clients_collection.count_documents({})
-        print(f"📊 Database stats: {user_count} users, {client_count} clients")
+        pending_registrations_count = pending_registrations_collection.count_documents({})
+        print(f"📊 Database stats: {user_count} users, {client_count} clients, {pending_registrations_count} pending registrations")
     except Exception as stats_error:
         print(f"⚠️ Warning: Could not get collection stats: {stats_error}")
         
@@ -379,13 +400,26 @@ def allowed_file(filename):
 def send_email(to_email, subject, body):
     """Send email notification"""
     try:
-        import email.mime.text
-        import email.mime.multipart
-        
         smtp_server = os.getenv('SMTP_SERVER')
-        smtp_port = int(os.getenv('SMTP_PORT'))
+        smtp_port = os.getenv('SMTP_PORT')
         smtp_email = os.getenv('SMTP_EMAIL')
         smtp_password = os.getenv('SMTP_PASSWORD')
+        
+        print(f"📧 Attempting to send email to: {to_email}")
+        print(f"📧 SMTP Server: {smtp_server}:{smtp_port}")
+        print(f"📧 From Email: {smtp_email}")
+        
+        # Check if all required SMTP configuration is available
+        if not all([smtp_server, smtp_port, smtp_email, smtp_password]):
+            print("❌ Missing SMTP configuration")
+            return False
+        
+        # Convert port to integer
+        try:
+            smtp_port = int(smtp_port)
+        except (ValueError, TypeError):
+            print("❌ Invalid SMTP port")
+            return False
         
         msg = email.mime.multipart.MIMEMultipart()
         msg['From'] = smtp_email
@@ -394,22 +428,44 @@ def send_email(to_email, subject, body):
         
         msg.attach(email.mime.text.MIMEText(body, 'html'))
         
+        print(f"📧 Connecting to SMTP server...")
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
+        
+        print(f"📧 Logging in...")
         server.login(smtp_email, smtp_password)
+        
+        print(f"📧 Sending email...")
         text = msg.as_string()
         server.sendmail(smtp_email, to_email, text)
         server.quit()
         
+        print(f"✅ Email sent successfully to {to_email}")
         return True
+        
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ SMTP Authentication failed: {str(e)}")
+        print("💡 Check your email and app password in .env file")
+        return False
+    except smtplib.SMTPRecipientsRefused as e:
+        print(f"❌ Recipient email refused: {str(e)}")
+        return False
+    except smtplib.SMTPException as e:
+        print(f"❌ SMTP error: {str(e)}")
+        return False
     except Exception as e:
-        print(f"Email sending failed: {str(e)}")
+        print(f"❌ Email sending failed: {str(e)}")
         return False
 
 @app.route('/api/register', methods=['POST'])
 def register():
     try:
         data = request.get_json()
+        
+        # Check if data is provided
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
         username = data.get('username')
         email = data.get('email')
         password = data.get('password')
@@ -422,30 +478,68 @@ def register():
             return jsonify({'error': 'Passwords do not match'}), 400
         
         # Check database connection
-        if db is None:
+        if db is None or users_collection is None:
             return jsonify({'error': 'Database connection failed'}), 500
         
-        # Check if user already exists
-        if users_collection.find_one({'email': email}):
+        # Check if user already exists in users collection (approved users only)
+        existing_user = users_collection.find_one({'email': email})
+        if existing_user:
             return jsonify({'error': 'User already exists'}), 400
+        
+        # Check if there's already a pending registration for this email
+        if pending_registrations_collection is not None:
+            existing_pending = pending_registrations_collection.find_one({'email': email})
+            if existing_pending:
+                # Delete the old pending registration to allow re-registration
+                pending_registrations_collection.delete_one({'email': email})
+                print(f"🔄 Removed old pending registration for {email}")
         
         # Hash password
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
         
-        # Create user
-        user_data = {
+        # Create pending registration (NOT in users collection)
+        registration_data = {
             'username': username,
             'email': email,
             'password': hashed_password,
-            'role': 'user',  # Default role
-            'created_at': datetime.utcnow()
+            'role': 'user',
+            'created_at': datetime.utcnow(),
+            'session_id': str(ObjectId())  # For tracking
         }
         
-        result = users_collection.insert_one(user_data)
+        if pending_registrations_collection is not None:
+            result = pending_registrations_collection.insert_one(registration_data)
+        
+        # Send notification to admin about new registration
+        try:
+            if users_collection is not None:
+                admin_users = list(users_collection.find({'role': 'admin', 'status': 'active'}))
+                for admin in admin_users:
+                    admin_email = admin.get('email')
+                    if admin_email:
+                        subject = "New User Registration Pending Approval"
+                        body = f"""
+                        <html>
+                        <body>
+                            <h2>New User Registration</h2>
+                            <p>A new user has registered and is pending approval:</p>
+                            <ul>
+                                <li><strong>Username:</strong> {username}</li>
+                                <li><strong>Email:</strong> {email}</li>
+                                <li><strong>Registration Date:</strong> {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC</li>
+                            </ul>
+                            <p>Please log in to the admin dashboard to approve or reject this registration.</p>
+                        </body>
+                        </html>
+                        """
+                        send_email(admin_email, subject, body)
+        except Exception as email_error:
+            print(f"Failed to send admin notification email: {email_error}")
         
         return jsonify({
-            'message': 'User registered successfully',
-            'user_id': str(result.inserted_id)
+            'message': 'Registration request submitted. Waiting for admin verification...',
+            'registration_id': str(result.inserted_id) if 'result' in locals() else 'unknown',
+            'status': 'waiting_approval'
         }), 201
         
     except Exception as e:
@@ -456,6 +550,11 @@ def register():
 def login():
     try:
         data = request.get_json()
+        
+        # Check if data is provided
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
         email = data.get('email')
         password = data.get('password')
         
@@ -466,7 +565,7 @@ def login():
             return jsonify({'error': 'Email and password are required'}), 400
         
         # Check database connection
-        if db is None:
+        if db is None or users_collection is None:
             print("Database connection not available")
             return jsonify({'error': 'Database connection failed'}), 500
         
@@ -476,6 +575,22 @@ def login():
         
         if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password']):
             return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Handle users without status (existing users) - set them as active
+        if 'status' not in user or user.get('status') is None:
+            users_collection.update_one(
+                {'_id': user['_id']},
+                {'$set': {'status': 'active'}}
+            )
+            user['status'] = 'active'
+        
+        # Check if user is pending approval
+        if user.get('status') == 'pending':
+            return jsonify({'error': 'Your account is pending admin approval. Please wait for approval.'}), 403
+        
+        # Check if user is rejected
+        if user.get('status') == 'rejected':
+            return jsonify({'error': 'Your account has been rejected. Please contact admin.'}), 403
         
         print(f"User role: {user['role']}")
         
@@ -516,7 +631,8 @@ def get_users():
         if claims.get('role') != 'admin':
             return jsonify({'error': 'Admin access required'}), 403
         
-        users = list(users_collection.find({}, {'password': 0}))  # Exclude password
+        # Get all users
+        users = list(users_collection.find({}, {'password': 0}))
         
         # Convert ObjectId to string
         for user in users:
@@ -528,6 +644,65 @@ def get_users():
         print(f"Get users error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.after_request
+def after_request(response):
+    """Add CORS headers to all responses"""
+    try:
+        origin = request.headers.get('Origin')
+        
+        # Handle Vercel preview deployments dynamically
+        if origin and 'vercel.app' in origin:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            print(f"Added CORS for Vercel origin: {origin}")
+        
+        return response
+    except Exception as e:
+        print(f"CORS after_request error: {e}")
+        return response
+
+@app.before_request
+def check_deleted_users():
+    """Check if the current user has been deleted and should be logged out"""
+    try:
+        # Skip for non-authenticated endpoints
+        if request.endpoint in ['login', 'register', 'check_registration_status', 'debug_database']:
+            return
+        
+        # Skip for OPTIONS requests
+        if request.method == 'OPTIONS':
+            return
+            
+        # Get the authorization header
+        auth_header = request.headers.get('Authorization')
+        # Extract token
+        token = auth_header.split(' ')[1]
+        
+        # Decode token to get user info
+        try:
+            from flask_jwt_extended import decode_token
+            decoded_token = decode_token(token)
+            user_id = decoded_token.get('sub')
+            user_email = decoded_token.get('email')
+            
+            # Check if user is in deleted users cache
+            deleted_users_cache = getattr(app, 'deleted_users_cache', set())
+            
+            if user_id in deleted_users_cache or user_email in deleted_users_cache:
+                print(f"🚫 Blocking request from deleted user: {user_email}")
+                return jsonify({
+                    'error': 'user_deleted',
+                    'message': 'Your account has been deleted. Please contact admin.',
+                    'logout_required': True
+                }), 401
+        except Exception as decode_error:
+            # Invalid token, let the normal JWT handling deal with it
+            pass
+            
+    except Exception as e:
+        print(f"Check deleted users error: {e}")
+        # Don't block the request if there's an error in this check
+        pass
+
 @app.route('/api/team', methods=['GET'])
 @jwt_required()
 def get_team():
@@ -538,9 +713,19 @@ def get_team():
             return jsonify({'error': 'Database connection failed'}), 500
         
         # All authenticated users can view team members
-        # Filter to show only team members (users with specific roles or criteria)
+        # Only show approved/active users (explicitly exclude pending and rejected)
         team_members = list(users_collection.find(
-            {'role': {'$in': ['admin', 'user']}},  # Include all roles for now
+            {
+                'role': {'$in': ['admin', 'user']},
+                '$and': [
+                    {'status': {'$ne': 'pending'}},    # Exclude pending users
+                    {'status': {'$ne': 'rejected'}},   # Exclude rejected users
+                    {'$or': [
+                        {'status': 'active'},
+                        {'status': {'$exists': False}}  # Legacy users without status field
+                    ]}
+                ]
+            },
             {'password': 0}  # Exclude password
         ))
         
@@ -556,54 +741,102 @@ def get_team():
         print(f"Get team error: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/debug/users', methods=['GET'])
+@app.route('/api/debug/all-users', methods=['GET'])
+@jwt_required()
 def debug_all_users():
-    """Debug endpoint to check all users in database - NO JWT required for troubleshooting"""
+    """Debug endpoint to see all users and their statuses - Admin only"""
     try:
-        print(f"=== DEBUG ALL USERS (NO JWT) ===")
+        # Check if user is admin
+        claims = get_jwt()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
         
         # Check database connection
         if db is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'Database connection not available',
-                'db_status': 'disconnected'
-            }), 500
+            return jsonify({'error': 'Database connection failed'}), 500
         
-        # Get all users in database
-        all_users = list(users_collection.find({}, {'password': 0}))
+        # Get all users with their statuses
+        all_users = list(users_collection.find(
+            {},
+            {'password': 0}  # Exclude password
+        ))
         
-        print(f"Total users in database: {len(all_users)}")
-        
+        # Convert ObjectId to string and add debug info
         for user in all_users:
             user['_id'] = str(user['_id'])
-            print(f"User: {user['email']} - Role: {user['role']} - Username: {user['username']}")
+            user['debug_status'] = user.get('status', 'NO_STATUS')
         
-        # Count by categories
-        admin_count = len([u for u in all_users if u['role'] == 'admin'])
-        user_count = len([u for u in all_users if u['role'] == 'user'])
-        tmis_count = len([u for u in all_users if u['email'].startswith('tmis.')])
-        tmis_users = len([u for u in all_users if u['email'].startswith('tmis.') and u['role'] == 'user'])
+        print(f"Debug: Found {len(all_users)} total users in database")
+        for user in all_users:
+            print(f"  - {user.get('username')} ({user.get('email')}) - Status: {user.get('debug_status')}")
         
-        print(f"Admin users: {admin_count}")
-        print(f"Regular users: {user_count}")
-        print(f"TMIS email users: {tmis_count}")
-        print(f"TMIS users with user role: {tmis_users}")
+        return jsonify({'users': all_users, 'total_count': len(all_users)}), 200
+        
+    except Exception as e:
+        print(f"Debug all users error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cleanup/rejected-users', methods=['DELETE'])
+@jwt_required()
+def cleanup_rejected_users():
+    """Remove all rejected users from database - Admin only"""
+    try:
+        # Check if user is admin
+        claims = get_jwt()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Find rejected users first
+        rejected_users = list(users_collection.find({'status': 'rejected'}))
+        print(f"Found {len(rejected_users)} rejected users to remove:")
+        for user in rejected_users:
+            print(f"  - {user.get('username')} ({user.get('email')})")
+        
+        # Delete rejected users
+        result = users_collection.delete_many({'status': 'rejected'})
+        
+        print(f"Deleted {result.deleted_count} rejected users")
         
         return jsonify({
-            'success': True,
-            'users': all_users,
-            'counts': {
-                'total': len(all_users),
-                'admin': admin_count,
-                'user': user_count,
-                'tmis_email': tmis_count,
-                'tmis_users': tmis_users
-            }
+            'message': f'Successfully removed {result.deleted_count} rejected users',
+            'deleted_count': result.deleted_count,
+            'rejected_users': [{'username': u.get('username'), 'email': u.get('email')} for u in rejected_users]
         }), 200
         
     except Exception as e:
-        print(f"Error in debug_all_users: {str(e)}")
+        print(f"Cleanup rejected users error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Emergency cleanup endpoint removed for security
+
+@app.route('/api/user-status', methods=['GET'])
+@jwt_required()
+def check_user_status():
+    """Check if current user still exists and is active"""
+    try:
+        current_user_id = get_jwt_identity()
+        
+        # Check if user exists in database
+        user = users_collection.find_one({'_id': ObjectId(current_user_id)})
+        
+        if not user:
+            return jsonify({
+                'error': 'user_deleted',
+                'message': 'Your account has been deleted. Please contact admin.',
+                'logout_required': True
+            }), 401
+        
+        return jsonify({
+            'status': 'active',
+            'message': 'User is active'
+        }), 200
+        
+    except Exception as e:
+        print(f"User status check error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/debug/database', methods=['GET'])
@@ -836,6 +1069,592 @@ def debug_production():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
+# User approval endpoints
+@app.route('/api/pending-users', methods=['GET'])
+@jwt_required()
+def get_pending_users():
+    """Get all pending user registrations - Admin only"""
+    try:
+        # Check if user is admin
+        claims = get_jwt()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Get pending registrations
+        pending_users = list(pending_registrations_collection.find(
+            {}, 
+            {'password': 0}  # Exclude password
+        ))
+        
+        # Convert ObjectId to string
+        for user in pending_users:
+            user['_id'] = str(user['_id'])
+        
+        return jsonify({'pending_users': pending_users}), 200
+        
+    except Exception as e:
+        print(f"Get pending users error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/approve-user/<user_id>', methods=['POST'])
+@jwt_required()
+def approve_user(user_id):
+    """Approve a pending user registration - Admin only"""
+    try:
+        print(f"🔍 Approve user request for ID: {user_id}")
+        
+        # Check if user is admin
+        claims = get_jwt()
+        current_user_id = get_jwt_identity()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Validate ObjectId format
+        try:
+            obj_id = ObjectId(user_id)
+        except Exception as e:
+            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            return jsonify({'error': 'Invalid user ID format'}), 400
+        
+        print(f"🔍 Looking for user with ObjectId: {obj_id}")
+        
+        # Find the pending registration
+        pending_registration = pending_registrations_collection.find_one({'_id': obj_id})
+        if not pending_registration:
+            print(f"❌ No pending registration found with ID: {user_id}")
+            return jsonify({'error': 'Pending registration not found'}), 404
+        
+        print(f"✅ Found pending registration: {pending_registration.get('username')} ({pending_registration.get('email')})")
+        
+        # Get admin info
+        admin_user = users_collection.find_one({'_id': ObjectId(current_user_id)})
+        admin_name = admin_user.get('username', 'Admin') if admin_user else 'Admin'
+        
+        # Create approved user in users collection
+        user_data = {
+            'username': pending_registration['username'],
+            'email': pending_registration['email'],
+            'password': pending_registration['password'],
+            'role': pending_registration['role'],
+            'status': 'active',
+            'created_at': pending_registration['created_at'],
+            'approved_at': datetime.utcnow(),
+            'approved_by': current_user_id
+        }
+        
+        # Insert into users collection
+        result = users_collection.insert_one(user_data)
+        
+        # Remove from pending registrations
+        pending_registrations_collection.delete_one({'_id': obj_id})
+        
+        if not result.inserted_id:
+            return jsonify({'error': 'Failed to approve user'}), 500
+        
+        # Send approval email to user
+        try:
+            subject = "Account Approved - TMIS Business Guru"
+            body = f"""
+            <html>
+            <body>
+                <h2>Account Approved!</h2>
+                <p>Dear {pending_registration['username']},</p>
+                <p>Your account registration has been approved by {admin_name}.</p>
+                <p>You can now log in to your account using your email and password.</p>
+                <p><strong>Login URL:</strong> <a href="https://tmis-business-guru.vercel.app/login">Login Here</a></p>
+                <p>Thank you for joining TMIS Business Guru!</p>
+            </body>
+            </html>
+            """
+            send_email(pending_registration['email'], subject, body)
+        except Exception as email_error:
+            print(f"Failed to send approval email: {email_error}")
+        
+        return jsonify({
+            'message': 'User approved successfully',
+            'user_id': user_id
+        }), 200
+        
+    except Exception as e:
+        print(f"Approve user error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/delete-user/<user_id>', methods=['DELETE'])
+@jwt_required()
+def delete_user(user_id):
+    """Delete a user - Admin only"""
+    try:
+        print(f"🗑️ Delete user request for ID: {user_id}")
+        
+        # Check if user is admin
+        claims = get_jwt()
+        current_user_id = get_jwt_identity()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Validate ObjectId format
+        try:
+            obj_id = ObjectId(user_id)
+        except Exception as e:
+            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            return jsonify({'error': 'Invalid user ID format'}), 400
+        
+        # Prevent admin from deleting themselves
+        if user_id == current_user_id:
+            return jsonify({'error': 'Cannot delete your own account'}), 400
+        
+        # Find the user to delete
+        user_to_delete = users_collection.find_one({'_id': obj_id})
+        if not user_to_delete:
+            print(f"❌ No user found with ID: {user_id}")
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Prevent deleting other admins (optional security measure)
+        if user_to_delete.get('role') == 'admin':
+            return jsonify({'error': 'Cannot delete admin users'}), 403
+        
+        print(f"✅ Found user to delete: {user_to_delete.get('username')} ({user_to_delete.get('email')})")
+        
+        # Store user info before deletion for logout
+        deleted_user_email = user_to_delete.get('email')
+        deleted_user_id = str(user_to_delete.get('_id'))
+        
+        # Delete the user
+        result = users_collection.delete_one({'_id': obj_id})
+        
+        if result.deleted_count == 0:
+            return jsonify({'error': 'Failed to delete user'}), 500
+        
+        print(f"✅ Successfully deleted user: {user_to_delete.get('username')}")
+        
+        # Add the deleted user to a blacklist for immediate logout
+        # This will be checked by the auth middleware
+        deleted_users_cache = getattr(app, 'deleted_users_cache', set())
+        deleted_users_cache.add(deleted_user_id)
+        deleted_users_cache.add(deleted_user_email)
+        app.deleted_users_cache = deleted_users_cache
+        
+        print(f"🚫 Added user to logout blacklist: {deleted_user_email}")
+        
+        # Schedule cleanup of the blacklist after 1 hour to prevent memory leaks
+        import threading
+        def cleanup_blacklist():
+            import time
+            time.sleep(3600)  # Wait 1 hour
+            try:
+                cache = getattr(app, 'deleted_users_cache', set())
+                cache.discard(deleted_user_id)
+                cache.discard(deleted_user_email)
+                print(f"🧹 Cleaned up blacklist entry for: {deleted_user_email}")
+            except:
+                pass
+        
+        cleanup_thread = threading.Thread(target=cleanup_blacklist, daemon=True)
+        cleanup_thread.start()
+        
+        return jsonify({
+            'message': f'User {user_to_delete.get("username")} deleted successfully',
+            'deleted_user_id': deleted_user_id,
+            'deleted_user_email': deleted_user_email
+        }), 200
+        
+    except Exception as e:
+        print(f"Delete user error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/reject-user/<user_id>', methods=['POST'])
+@jwt_required()
+def reject_user(user_id):
+    """Reject a pending user registration - Admin only"""
+    try:
+        print(f"🗑️ Reject user request for ID: {user_id}")
+        # Check if user is admin
+        claims = get_jwt()
+        current_user_id = get_jwt_identity()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        data = request.get_json()
+        rejection_reason = data.get('reason', 'No reason provided')
+        
+        # Validate ObjectId format
+        try:
+            obj_id = ObjectId(user_id)
+        except Exception as e:
+            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            return jsonify({'error': 'Invalid user ID format'}), 400
+        
+        # Find the pending registration
+        pending_registration = pending_registrations_collection.find_one({'_id': obj_id})
+        if not pending_registration:
+            print(f"❌ No pending registration found with ID: {user_id}")
+            return jsonify({'error': 'Pending registration not found'}), 404
+        
+        print(f"✅ Found pending registration: {pending_registration.get('username')} ({pending_registration.get('email')})")
+        
+        # Get admin info
+        admin_user = users_collection.find_one({'_id': ObjectId(current_user_id)})
+        admin_name = admin_user.get('username', 'Admin') if admin_user else 'Admin'
+        
+        # Delete the pending registration (rejection means removal)
+        result = pending_registrations_collection.delete_one({'_id': obj_id})
+        
+        if result.deleted_count == 0:
+            return jsonify({'error': 'Failed to reject user'}), 500
+        
+        print(f"✅ Successfully rejected registration: {pending_registration.get('username')}")
+        
+        # Send rejection email to user
+        try:
+            subject = "Account Registration - TMIS Business Guru"
+            body = f"""
+            <html>
+            <body>
+                <h2>Account Registration Update</h2>
+                <p>Dear {pending_registration['username']},</p>
+                <p>We regret to inform you that your account registration has been declined.</p>
+                <p><strong>Reason:</strong> {rejection_reason}</p>
+                <p>If you have any questions, please contact our support team.</p>
+            </body>
+            </html>
+            """
+            send_email(pending_registration['email'], subject, body)
+        except Exception as email_error:
+            print(f"Failed to send rejection email: {email_error}")
+        
+        return jsonify({
+            'message': 'User rejected successfully',
+            'user_id': user_id
+        }), 200
+        
+    except Exception as e:
+        print(f"Reject user error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Forgot password endpoints
+@app.route('/api/forgot-password', methods=['POST'])
+def forgot_password():
+    """Send password reset code to user's email"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        
+        if not email:
+            return jsonify({'error': 'Email is required'}), 400
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        print(f"🔍 Looking for user with email: {email}")
+        
+        # First check if user exists at all
+        user_any_status = users_collection.find_one({'email': email})
+        print(f"🔍 User found (any status): {user_any_status is not None}")
+        
+        if user_any_status:
+            print(f"🔍 User status: {user_any_status.get('status', 'No status field')}")
+            print(f"🔍 User details: {user_any_status.get('username', 'No username')}")
+        
+        # Find user - check both active users and users without status (legacy users)
+        user = users_collection.find_one({
+            'email': email, 
+            '$or': [
+                {'status': 'active'},
+                {'status': {'$exists': False}}  # Legacy users without status field
+            ]
+        })
+        
+        if not user:
+            print(f"❌ No active user found for email: {email}")
+            # Return error for non-existent users (as requested)
+            return jsonify({'error': 'Email not found. Only registered users can reset their password.'}), 404
+        
+        print(f"✅ Found user: {user.get('username')} with status: {user.get('status', 'legacy')}")
+        
+        # Generate 6-digit reset code
+        import random
+        reset_code = str(random.randint(100000, 999999))
+        # Store reset code with expiration (15 minutes)
+        reset_data = {
+            'user_id': str(user['_id']),
+            'email': email,
+            'reset_code': reset_code,
+            'created_at': datetime.utcnow(),
+            'expires_at': datetime.utcnow() + timedelta(minutes=15),
+            'used': False
+        }
+        
+        # Create or update reset collection
+        reset_collection = db.password_resets
+        reset_collection.insert_one(reset_data)
+        
+        # Send reset code email
+        try:
+            subject = "Password Reset Code - TMIS Business Guru"
+            body = f"""
+            <html>
+            <body>
+                <h2>Password Reset Request</h2>
+                <p>Dear {user['username']},</p>
+                <p>You have requested to reset your password. Please use the following code:</p>
+                <h3 style="color: #007bff; font-size: 24px; letter-spacing: 2px;">{reset_code}</h3>
+                <p><strong>This code will expire in 15 minutes.</strong></p>
+                <p>If you didn't request this reset, please ignore this email.</p>
+            </body>
+            </html>
+            """
+            
+            print(f"Sending reset code {reset_code} to {email}")
+            email_sent = send_email(email, subject, body)
+            
+            if not email_sent:
+                print(f"Email sending failed for {email}")
+                return jsonify({'error': 'Failed to send reset code. Please check your email address.'}), 500
+                
+            print(f"✅ Email sent successfully to {email}")
+            
+            # Return success response
+            return jsonify({
+                'message': 'Password reset code sent successfully. Please check your email.',
+                'email': email
+            }), 200
+            
+        except Exception as email_error:
+            print(f"Failed to send reset code email: {email_error}")
+            return jsonify({'error': 'Failed to send reset code. Please try again later.'}), 500
+        
+    except Exception as e:
+        print(f"Forgot password error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Test SMTP configuration endpoint
+@app.route('/api/test-smtp', methods=['POST'])
+@jwt_required()
+def test_smtp():
+    """Test SMTP email configuration"""
+    try:
+        data = request.get_json()
+        test_email = data.get('email')
+        
+        if not test_email:
+            return jsonify({'error': 'Email is required'}), 400
+        
+        subject = "SMTP Test - TMIS Business Guru"
+        body = """
+        <html>
+        <body>
+            <h2>SMTP Configuration Test</h2>
+            <p>This is a test email to verify SMTP configuration is working correctly.</p>
+            <p>If you received this email, your SMTP settings are configured properly!</p>
+            <p><strong>TMIS Business Guru System</strong></p>
+        </body>
+        </html>
+        """
+        
+        print(f"Testing SMTP with email: {test_email}")
+        email_sent = send_email(test_email, subject, body)
+        
+        if email_sent:
+            return jsonify({
+                'success': True,
+                'message': 'Test email sent successfully!',
+                'email': test_email
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to send test email. Check SMTP configuration.',
+                'email': test_email
+            }), 500
+            
+    except Exception as e:
+        print(f"SMTP test error: {e}")
+        return jsonify({'error': f'SMTP test failed: {str(e)}'}), 500
+
+# Add endpoint to check user registration status
+@app.route('/api/check-registration-status/<email>', methods=['GET'])
+def check_registration_status(email):
+    """Check the registration status of a user by email"""
+    try:
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # First check if user exists in users collection (approved)
+        user = users_collection.find_one({'email': email})
+        
+        if user:
+            user_status = user.get('status', 'active')  # Default to active for legacy users
+        else:
+            # Check if there's a pending registration
+            pending_registration = pending_registrations_collection.find_one({'email': email})
+            if pending_registration:
+                user_status = 'pending'
+                user = pending_registration  # Use pending registration data
+            else:
+                return jsonify({
+                    'status': 'not_registered',
+                    'message': 'Email not found. Please register first.'
+                }), 404
+        
+        status_messages = {
+            'pending': 'Your registration is pending admin approval. Please wait for approval.',
+            'active': 'Your account is approved and active. You can log in.',
+            'rejected': 'Your registration was rejected. Please contact admin for more information.'
+        }
+        
+        return jsonify({
+            'status': user_status,
+            'message': status_messages.get(user_status, 'Unknown status'),
+            'username': user.get('username', ''),
+            'email': user.get('email', ''),
+            'created_at': user.get('created_at', '').isoformat() if user.get('created_at') else ''
+        }), 200
+        
+    except Exception as e:
+        print(f"Check registration status error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/verify-reset-code', methods=['POST'])
+def verify_reset_code():
+    """Verify the password reset code"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        reset_code = data.get('reset_code')
+        
+        if not all([email, reset_code]):
+            return jsonify({'error': 'Email and reset code are required'}), 400
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Find valid reset code
+        reset_collection = db.password_resets
+        reset_record = reset_collection.find_one({
+            'email': email,
+            'reset_code': reset_code,
+            'used': False,
+            'expires_at': {'$gt': datetime.utcnow()}
+        })
+        
+        if not reset_record:
+            return jsonify({'error': 'Invalid or expired reset code'}), 400
+        
+        return jsonify({
+            'message': 'Reset code verified successfully',
+            'valid': True
+        }), 200
+        
+    except Exception as e:
+        print(f"Verify reset code error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/reset-password', methods=['POST'])
+def reset_password():
+    """Reset user password with verified code"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        reset_code = data.get('reset_code')
+        new_password = data.get('new_password')
+        confirm_password = data.get('confirm_password')
+        
+        if not all([email, reset_code, new_password, confirm_password]):
+            return jsonify({'error': 'All fields are required'}), 400
+        
+        if new_password != confirm_password:
+            return jsonify({'error': 'Passwords do not match'}), 400
+        
+        if len(new_password) < 6:
+            return jsonify({'error': 'Password must be at least 6 characters long'}), 400
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Find and validate reset code
+        reset_collection = db.password_resets
+        reset_record = reset_collection.find_one({
+            'email': email,
+            'reset_code': reset_code,
+            'used': False,
+            'expires_at': {'$gt': datetime.utcnow()}
+        })
+        
+        if not reset_record:
+            return jsonify({'error': 'Invalid or expired reset code'}), 400
+        
+        # Find user
+        user = users_collection.find_one({'email': email, 'status': 'active'})
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Hash new password
+        hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+        
+        # Update user password
+        result = users_collection.update_one(
+            {'_id': user['_id']},
+            {
+                '$set': {
+                    'password': hashed_password,
+                    'password_updated_at': datetime.utcnow()
+                }
+            }
+        )
+        
+        if result.modified_count == 0:
+            return jsonify({'error': 'Failed to update password'}), 500
+        
+        # Mark reset code as used
+        reset_collection.update_one(
+            {'_id': reset_record['_id']},
+            {'$set': {'used': True, 'used_at': datetime.utcnow()}}
+        )
+        
+        # Send confirmation email
+        try:
+            subject = "Password Reset Successful - TMIS Business Guru"
+            body = f"""
+            <html>
+            <body>
+                <h2>Password Reset Successful</h2>
+                <p>Dear {user['username']},</p>
+                <p>Your password has been successfully reset.</p>
+                <p>You can now log in with your new password.</p>
+                <p>If you didn't make this change, please contact support immediately.</p>
+            </body>
+            </html>
+            """
+            send_email(email, subject, body)
+        except Exception as email_error:
+            print(f"Failed to send confirmation email: {email_error}")
+        
+        return jsonify({'message': 'Password reset successfully'}), 200
+        
+    except Exception as e:
+        print(f"Reset password error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # Import and register client routes
 try:
     print("🔄 Importing client routes...")
@@ -1007,5 +1826,117 @@ except Exception as e:
                 'enquiries': [],
                 'fallback': True
             }), 500
+
+# Initialize SocketIO handlers
+try:
+    from socketio_handlers import init_socketio_handlers
+    init_socketio_handlers(socketio, users_collection)
+    print("✅ SocketIO handlers initialized successfully")
+except Exception as e:
+    print(f"❌ Error initializing SocketIO handlers: {e}")
+
+# Add real-time registration endpoint
+@app.route('/api/register-realtime', methods=['POST'])
+def register_realtime():
+    try:
+        from socketio_handlers import create_approval_request
+        
+        data = request.get_json()
+        username = data.get('username')
+        email = data.get('email')
+        password = data.get('password')
+        confirm_password = data.get('confirmPassword')
+        user_session_id = data.get('session_id')
+        
+        if not all([username, email, password, confirm_password]):
+            return jsonify({'error': 'All fields are required'}), 400
+        
+        if password != confirm_password:
+            return jsonify({'error': 'Passwords do not match'}), 400
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Check if user already exists
+        existing_user = users_collection.find_one({'email': email})
+        if existing_user:
+            return jsonify({'error': 'User already exists'}), 400
+        
+        # Hash password
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        
+        # Create user data (but don't save to DB yet)
+        user_data = {
+            'username': username,
+            'email': email,
+            'password': hashed_password,
+            'role': 'user',
+            'created_at': datetime.utcnow()
+        }
+        
+        # Create approval request and notify admins
+        approval_id = create_approval_request(socketio, user_data, user_session_id)
+        
+        return jsonify({
+            'message': 'Approval request sent to admin. Please wait...',
+            'approval_id': approval_id,
+            'status': 'pending_approval'
+        }), 200
+        
+    except Exception as e:
+        print(f"Registration error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# GreenAPI WhatsApp test endpoint
+@app.route('/api/test-greenapi', methods=['POST'])
+@jwt_required()
+def test_greenapi_endpoint():
+    """Test GreenAPI WhatsApp service"""
+    try:
+        data = request.get_json()
+        mobile_number = data.get('mobile_number', '918106811285')
+        
+        # Import GreenAPI service
+        from greenapi_whatsapp_service import whatsapp_service
+        
+        if not whatsapp_service or not whatsapp_service.api_available:
+            return jsonify({
+                'success': False,
+                'error': 'GreenAPI service not available',
+                'solution': 'Check GREENAPI_INSTANCE_ID and GREENAPI_TOKEN in .env'
+            }), 500
+        
+        # Test message
+        test_message = f"🧪 TMIS GreenAPI Test\n\nHello! This is a test message from TMIS Business Guru.\n\n✅ No OTP required\n🚀 Sent via GreenAPI\n\nTime: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        
+        result = whatsapp_service.send_message(mobile_number, test_message)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': 'GreenAPI test message sent successfully',
+                'message_id': result.get('message_id'),
+                'mobile_number': mobile_number,
+                'service': 'GreenAPI'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': result.get('error'),
+                'mobile_number': mobile_number,
+                'service': 'GreenAPI'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Test failed: {str(e)}'
+        }), 500
+
+# Main execution
+if __name__ == '__main__':
+    print("🚀 Starting TMIS Business Guru Backend with SocketIO...")
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
 
 # Export app for main.py to use
