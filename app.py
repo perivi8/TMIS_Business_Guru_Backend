@@ -83,32 +83,32 @@ print(f"🔧 Flask Environment: {flask_env}")
 
 # Configure CORS with comprehensive settings
 # Use specific origins for both production and development to support credentials
-cors_config = {
-    "origins": allowed_origins,
-    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
-    "allow_headers": [
-        "Content-Type", 
-        "Authorization", 
-        "X-Requested-With",
-        "Accept",
-        "Origin",
-        "Cache-Control",
-        "X-Forwarded-For",
-        "X-Real-IP"
-    ],
-    "supports_credentials": True,
-    "expose_headers": [
-        "Content-Disposition",
-        "Authorization",
-        "Access-Control-Allow-Origin"
-    ],
-    "send_wildcard": False,
-    "always_send": True,
-    "automatic_options": True,
-    "max_age": 86400  # Cache preflight for 24 hours
-}
-
-cors.init_app(app, resources={r"/*": cors_config})
+cors.init_app(app, resources={
+    r"/*": {
+        "origins": allowed_origins,
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
+        "allow_headers": [
+            "Content-Type", 
+            "Authorization", 
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "Cache-Control",
+            "X-Forwarded-For",
+            "X-Real-IP"
+        ],
+        "supports_credentials": True,
+        "expose_headers": [
+            "Content-Disposition",
+            "Authorization",
+            "Access-Control-Allow-Origin"
+        ],
+        "send_wildcard": False,
+        "always_send": True,
+        "automatic_options": True,
+        "max_age": 86400  # Cache preflight for 24 hours
+    }
+})
 jwt = JWTManager(app)
 
 # Initialize SocketIO with CORS support
