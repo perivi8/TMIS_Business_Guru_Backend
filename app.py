@@ -83,39 +83,32 @@ print(f"🔧 Flask Environment: {flask_env}")
 
 # Configure CORS with comprehensive settings
 # Use specific origins for both production and development to support credentials
-cors.init_app(app, resources={
-    r"/*": {
-        "origins": allowed_origins,
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
-        "allow_headers": [
-            "Content-Type", 
-            "content-type",
-            "Authorization", 
-            "authorization",
-            "X-Requested-With",
-            "Accept",
-            "accept",
-            "Origin",
-            "origin",
-            "Cache-Control",
-            "X-Forwarded-For",
-            "X-Real-IP",
-            "Access-Control-Allow-Headers",
-            "Access-Control-Request-Method",
-            "Access-Control-Request-Headers"
-        ],
-        "supports_credentials": True,
-        "expose_headers": [
-            "Content-Disposition",
-            "Authorization",
-            "Access-Control-Allow-Origin"
-        ],
-        "send_wildcard": False,
-        "always_send": True,
-        "automatic_options": True,
-        "max_age": 86400  # Cache preflight for 24 hours
-    }
-})
+cors.init_app(app, 
+    origins=allowed_origins,
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
+    allow_headers=[
+        "Content-Type", 
+        "Authorization", 
+        "X-Requested-With",
+        "Accept",
+        "Origin",
+        "Cache-Control",
+        "X-Forwarded-For",
+        "X-Real-IP",
+        "Access-Control-Allow-Headers",
+        "Access-Control-Request-Method",
+        "Access-Control-Request-Headers"
+    ],
+    supports_credentials=True,
+    expose_headers=[
+        "Content-Disposition",
+        "Authorization",
+        "Access-Control-Allow-Origin"
+    ],
+    send_wildcard=False,
+    automatic_options=True,
+    max_age=86400  # Cache preflight for 24 hours
+)
 jwt = JWTManager(app)
 
 # Initialize SocketIO with CORS support
@@ -213,17 +206,21 @@ def comprehensive_status():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-@app.route('/api/cors-debug', methods=['GET', 'OPTIONS'])
+@app.route('/api/cors-debug', methods=['GET', 'POST', 'OPTIONS'])
 def cors_debug():
     """Debug endpoint to check CORS configuration"""
     origin = request.headers.get('Origin', 'No Origin Header')
+    content_type = request.headers.get('Content-Type', 'No Content-Type Header')
     
     return jsonify({
         'message': 'CORS Debug Endpoint',
+        'method': request.method,
         'request_origin': origin,
+        'content_type': content_type,
         'allowed_origins': allowed_origins,
         'request_headers': dict(request.headers),
         'cors_configured': True,
+        'flask_env': flask_env,
         'timestamp': datetime.utcnow().isoformat()
     }), 200
 
