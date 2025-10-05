@@ -260,78 +260,64 @@ Thank you !"""
             # Check for new current account
             # Send notification when new_current_account is set to 'Yes'
             # This should happen regardless of whether bank details are being updated in the same request
-            if 'new_current_account' in updated_fields and client_data.get('new_current_account') == 'Yes':
-                new_bank_name = client_data.get('new_bank_name', 'N/A')
-                new_account_name = client_data.get('new_account_name', 'N/A')
-                new_bank_account_number = client_data.get('new_bank_account_number', 'N/A')
-                new_ifsc_code = client_data.get('new_ifsc_code', 'N/A')
+            if 'new_current_account' in updated_fields:
+                current_value = client_data.get('new_current_account', '')
+                old_value = old_client_data.get('new_current_account', '') if old_client_data else ''
                 
-                message = f"""Hii {legal_name} sir/madam, 
+                # Only send message if changed from No/empty to yes (check both 'yes' and 'Yes')
+                if current_value.lower() == 'yes' and old_value.lower() != 'yes':
+                    new_bank_name = client_data.get('new_bank_name', 'N/A')
+                    new_account_name = client_data.get('new_account_name', 'N/A')
+                    new_bank_account_number = client_data.get('new_bank_account_number', 'N/A')
+                    new_ifsc_code = client_data.get('new_ifsc_code', 'N/A')
+                    
+                    message = f"""Hii {legal_name} sir/madam, 
 
-Your New current was added successfully . 
+Your New current account was added successfully. 
 
-your current account details are 
+Your current account details are:
 
-New Bank name : {new_bank_name}
+New Bank name: {new_bank_name}
 
-New Account name : {new_account_name}
+New Account name: {new_account_name}
 
-new bank account number : {new_bank_account_number}
+New bank account number: {new_bank_account_number}
 
-new IFSC code : {new_ifsc_code}
+New IFSC code: {new_ifsc_code}
 
-please check all details are correct! if any mistake means please contact us
+Please check all details are correct! If any mistake means please contact us.
 
-Thank you !"""
-                result = self.whatsapp_service.send_message(formatted_number, message)
-                results.append(result)
-            
-            # Check for IE Code updates
-            if 'ie_code' in updated_fields:
-                # Check if IE document exists in the documents field
-                documents = client_data.get('documents', {})
-                # Also check in old client data for comparison
-                old_documents = old_client_data.get('documents', {}) if old_client_data else {}
-                
-                # Send message only if IE document was actually uploaded
-                if 'ie_code_document' in documents and documents['ie_code_document']:
-                    # Check if this is a new upload (not previously present)
-                    if 'ie_code_document' not in old_documents or not old_documents['ie_code_document']:
-                        message = f"""Hii {legal_name} sir/madam, 
-
-Your IE Code has been successfully Completed. 
-
-Thank you ! further any update means we will update you ,"""
-                        result = self.whatsapp_service.send_message(formatted_number, message)
-                        results.append(result)
-                    else:
-                        logger.info(f"IE Code document already existed, not sending duplicate notification for {legal_name}")
+Thank you!"""
+                    result = self.whatsapp_service.send_message(formatted_number, message)
+                    results.append(result)
+                    logger.info(f"New current account notification sent for {legal_name}")
                 else:
-                    logger.info(f"No IE Code document uploaded, not sending notification for {legal_name}")
+                    logger.info(f"New current account not changed to 'yes' or already was 'yes', not sending notification for {legal_name}")
             
-            # Check for IE Code document uploads specifically (when uploaded in client edit page)
-            if 'documents' in updated_fields:
-                # Check if IE document exists in the documents field
+            # Check for IE Code document uploads - CONSOLIDATED LOGIC TO PREVENT DUPLICATES
+            # Only check once for IE document uploads to prevent duplicate messages
+            ie_document_uploaded = False
+            
+            # Check if IE Code document was uploaded (either through 'ie_code' field or 'documents' field)
+            if ('ie_code' in updated_fields or 'documents' in updated_fields) and not ie_document_uploaded:
                 documents = client_data.get('documents', {})
-                # Also check in old client data for comparison
                 old_documents = old_client_data.get('documents', {}) if old_client_data else {}
                 
                 # Send message only if IE document was actually uploaded and is new
-                if 'ie_code_document' in documents and documents['ie_code_document']:
-                    # Check if this is a new upload (not previously present)
-                    if 'ie_code_document' not in old_documents or not old_documents['ie_code_document']:
-                        message = f"""Hii {legal_name} sir/madam, 
+                if ('ie_code_document' in documents and documents['ie_code_document'] and
+                    ('ie_code_document' not in old_documents or not old_documents['ie_code_document'])):
+                    
+                    message = f"""Hii {legal_name} sir/madam, 
 
-Your IE Code has been successfully Completed. 
+Your IE Code has been successfully completed. 
 
-Thank you ! further any update means we will update you ,"""
-                        result = self.whatsapp_service.send_message(formatted_number, message)
-                        results.append(result)
-                        logger.info(f"IE Code document uploaded successfully, notification sent for {legal_name}")
-                    else:
-                        logger.info(f"IE Code document already existed, not sending duplicate notification for {legal_name}")
+Thank you! For further any update we will update you."""
+                    result = self.whatsapp_service.send_message(formatted_number, message)
+                    results.append(result)
+                    ie_document_uploaded = True
+                    logger.info(f"IE Code document uploaded successfully, notification sent for {legal_name}")
                 else:
-                    logger.info(f"No new IE Code document uploaded, not sending notification for {legal_name}")
+                    logger.info(f"No new IE Code document uploaded or already existed, not sending notification for {legal_name}")
             
             # Check for payment gateway status updates
             if 'payment_gateways_status' in updated_fields:
