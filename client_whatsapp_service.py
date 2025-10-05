@@ -89,8 +89,10 @@ class ClientWhatsAppService:
             ie_code = client_data.get('ie_code', 'N/A')
             website = client_data.get('website', 'N/A')
             
-            # Format IE Code display - only show Yes if IE Code is actually uploaded
-            ie_code_display = "Yes" if ie_code and ie_code.strip() else "No"
+            # Format IE Code display - only show Yes if IE Code document is actually uploaded
+            # Check if IE document exists in the documents field
+            documents = client_data.get('documents', {})
+            ie_code_display = "Yes" if 'ie_code_document' in documents and documents['ie_code_document'] else "No"
             
             # Format website display
             website_display = website if website and website.strip() else "No"
@@ -285,15 +287,22 @@ Thank you !"""
             
             # Check for IE Code updates
             if 'ie_code' in updated_fields:
-                ie_code = client_data.get('ie_code', '')
-                if ie_code and ie_code.strip():
-                    message = f"""Hii {legal_name} sir/madam, 
+                # Check if IE document exists in the documents field
+                documents = client_data.get('documents', {})
+                # Also check in old client data for comparison
+                old_documents = old_client_data.get('documents', {}) if old_client_data else {}
+                
+                # Send message only if IE document was actually uploaded
+                if 'ie_code_document' in documents and documents['ie_code_document']:
+                    # Check if this is a new upload (not previously present)
+                    if 'ie_code_document' not in old_documents or not old_documents['ie_code_document']:
+                        message = f"""Hii {legal_name} sir/madam, 
 
 Your IE Code has been successfully Completed. 
 
 Thank you ! further any update means we will update you ,"""
-                    result = self.whatsapp_service.send_message(formatted_number, message)
-                    results.append(result)
+                        result = self.whatsapp_service.send_message(formatted_number, message)
+                        results.append(result)
             
             # Check for payment gateway status updates
             if 'payment_gateways_status' in updated_fields:
@@ -533,12 +542,26 @@ Your personal information has been updated successfully.
 Thank you for keeping your information up to date with us!"""
                 
             elif update_type == 'ie_document':
-                # IE Document uploaded
-                message = f"""Hii {legal_name} sir/madam, 
+                # IE Document uploaded - check if IE document actually exists in documents
+                documents = client_data.get('documents', {})
+                # Also check in old client data for comparison
+                old_documents = old_client_data.get('documents', {}) if old_client_data else {}
+                
+                # Send message only if IE document was actually uploaded
+                if 'ie_code_document' in documents and documents['ie_code_document']:
+                    # Check if this is a new upload (not previously present)
+                    if 'ie_code_document' not in old_documents or not old_documents['ie_code_document']:
+                        message = f"""Hii {legal_name} sir/madam, 
 
 Your IE Code has been successfully uploaded. 
 
 Thank you for providing all the required documents!"""
+                    else:
+                        # Document was already present, don't send duplicate message
+                        return {'success': True, 'message': 'No new IE document uploaded'}
+                else:
+                    # No IE document was actually uploaded
+                    return {'success': True, 'message': 'No IE document to send notification for'}
             
             elif update_type == 'new_current_account':
                 # New current account added
