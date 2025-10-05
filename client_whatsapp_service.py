@@ -89,7 +89,7 @@ class ClientWhatsAppService:
             ie_code = client_data.get('ie_code', 'N/A')
             website = client_data.get('website', 'N/A')
             
-            # Format IE Code display
+            # Format IE Code display - only show Yes if IE Code is actually uploaded
             ie_code_display = "Yes" if ie_code and ie_code.strip() else "No"
             
             # Format website display
@@ -269,13 +269,13 @@ Your New current was added successfully .
 
 your current account details are 
 
-New Bank name 
+New Bank name : {new_bank_name}
 
-New Account name 
+New Account name : {new_account_name}
 
-new bank account number 
+new bank account number : {new_bank_account_number}
 
-new IFSC code 
+new IFSC code : {new_ifsc_code}
 
 please check all details are correct! if any mistake means please contact us
 
@@ -289,9 +289,9 @@ Thank you !"""
                 if ie_code and ie_code.strip():
                     message = f"""Hii {legal_name} sir/madam, 
 
-Your IE Code has been successfully uploaded. 
+Your IE Code has been successfully Completed. 
 
-Thank you for providing all the required documents!"""
+Thank you ! further any update means we will update you ,"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
                     results.append(result)
             
@@ -303,6 +303,7 @@ Thank you for providing all the required documents!"""
                 # Find newly approved gateways (changed from not approved to approved)
                 newly_approved_gateways = []
                 newly_rejected_gateways = []
+                newly_added_gateways = []  # For general payment gateway additions
                 
                 for gateway, new_status in payment_gateways_status.items():
                     old_status = old_payment_gateways_status.get(gateway, 'pending')
@@ -310,8 +311,11 @@ Thank you for providing all the required documents!"""
                     if old_status != new_status:
                         if new_status == 'approved':
                             newly_approved_gateways.append(gateway)
-                        elif new_status == 'rejected':
+                        elif new_status == 'rejected' or new_status == 'not_approved':
                             newly_rejected_gateways.append(gateway)
+                    # Check for newly added gateways (when old status was not present)
+                    elif old_status == 'pending' and gateway not in old_payment_gateways_status:
+                        newly_added_gateways.append(gateway)
                 
                 user_email = client_data.get('user_email', 'your registered email')
                 
@@ -340,6 +344,40 @@ Unfortunately! Your loan has been not approved from ({rejected_gateways_str}).
 No need to worry we try another payment gateway, once any new update we will update you
 
 If you have any queries, please reach us.
+
+Thank you!"""
+                    result = self.whatsapp_service.send_message(formatted_number, message)
+                    results.append(result)
+                
+                # Send general payment gateway update message when gateways are added but not yet approved/rejected
+                if 'payment_gateways' in updated_fields and not newly_approved_gateways and not newly_rejected_gateways:
+                    payment_gateways = client_data.get('payment_gateways', [])
+                    if payment_gateways:
+                        gateways_list = ", ".join(payment_gateways)
+                        message = f"""Hii {legal_name} sir/madam, 
+
+Selected payment gateway options ({gateways_list}) have been applied successfully. 
+
+Once Loan Approved, you will get mail to your registered email. 
+
+If any queries please reach us. 
+
+Thank you!"""
+                        result = self.whatsapp_service.send_message(formatted_number, message)
+                        results.append(result)
+            
+            # Also check for payment gateways being added without status changes
+            elif 'payment_gateways' in updated_fields:
+                payment_gateways = client_data.get('payment_gateways', [])
+                if payment_gateways:
+                    gateways_list = ", ".join(payment_gateways)
+                    message = f"""Hii {legal_name} sir/madam, 
+
+Selected payment gateway options ({gateways_list}) have been applied successfully. 
+
+Once Loan Approved, you will get mail to your registered email. 
+
+If any queries please reach us. 
 
 Thank you!"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
@@ -515,13 +553,13 @@ Your New current was added successfully .
 
 your current account details are 
 
-New Bank name 
+New Bank name : {new_bank_name}
 
-New Account name 
+New Account name : {new_account_name}
 
-new bank account number 
+new bank account number : {new_bank_account_number}
 
-new IFSC code 
+new IFSC code : {new_ifsc_code}
 
 please check all details are correct! if any mistake means please contact us
 
@@ -546,7 +584,7 @@ Thank you !"""
                     if old_status != new_status:
                         if new_status == 'approved':
                             newly_approved_gateways.append(gateway)
-                        elif new_status == 'rejected':
+                        elif new_status == 'rejected' or new_status == 'not_approved':
                             newly_rejected_gateways.append(gateway)
                 
                 if newly_approved_gateways:
@@ -566,9 +604,9 @@ Thank you!"""
                     rejected_gateways_str = ", ".join(newly_rejected_gateways)
                     message = f"""Hii {legal_name} sir/madam, 
 
-Unfortunatily! Your loan has been not approved from ({rejected_gateways_str}). 
+Unfortunately! Your loan has been not approved from ({rejected_gateways_str}). 
 
-no need to worry we try another payment gateway , once any new update we will update you
+No need to worry we try another payment gateway, once any new update we will update you
 
 If you have any queries, please reach us.
 

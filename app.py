@@ -40,7 +40,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Initialize CORS with default settings
 cors = CORS()
 
-# Configure CORS
+# Configure CORS with more flexible settings to handle Vercel deployments
 # Get allowed origins from environment or use defaults
 allowed_origins = [
     "http://localhost:4200", 
@@ -72,40 +72,28 @@ if flask_env == 'production':
         "https://tmis-business-guru-frontend-git-main-perivihks-projects.vercel.app",
         "https://tmis-business-guru-angular.vercel.app",
         "https://tmis-business-guru-angular-git-main.vercel.app",
-        "https://tmis-business-guru-angular-perivihks-projects.vercel.app"
+        "https://tmis-business-guru-angular-perivihks-projects.vercel.app",
+        # Add wildcard pattern to catch all Vercel deployments
+        "https://*.vercel.app"
     ]
     allowed_origins.extend(vercel_domains)
     print(f"🔧 Production mode: Added Vercel domains to CORS")
-# Development mode uses the base allowed_origins list (localhost domains)
 
 print(f"🌐 CORS Allowed Origins: {allowed_origins}")
 print(f"🔧 Flask Environment: {flask_env}")
 
 # Configure CORS with comprehensive settings
-# Use specific origins for both production and development to support credentials
 cors.init_app(app, 
-    origins=allowed_origins,
+    origins="*" if flask_env == 'development' else allowed_origins,
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
-    allow_headers=[
-        "Content-Type", 
-        "Authorization", 
-        "X-Requested-With",
-        "Accept",
-        "Origin",
-        "Cache-Control",
-        "X-Forwarded-For",
-        "X-Real-IP",
-        "Access-Control-Allow-Headers",
-        "Access-Control-Request-Method",
-        "Access-Control-Request-Headers"
-    ],
+    allow_headers="*",
     supports_credentials=True,
     expose_headers=[
         "Content-Disposition",
         "Authorization",
         "Access-Control-Allow-Origin"
     ],
-    send_wildcard=False,
+    send_wildcard=True,
     automatic_options=True,
     max_age=86400  # Cache preflight for 24 hours
 )
@@ -287,11 +275,15 @@ def after_request_cors_handler(response):
         
         # For production, dynamically allow Vercel origins that aren't in the static list
         if flask_env == 'production' and origin and 'vercel.app' in origin:
-            # Only add headers if the origin is not already handled by Flask-CORS
-            if origin not in allowed_origins:
-                # Add the new Vercel origin to allowed list for future requests
-                allowed_origins.append(origin)
-                print(f"🔄 Added new Vercel origin: {origin}")
+            # Add CORS headers for Vercel origins
+            response.headers.add('Access-Control-Allow-Origin', origin)
+            response.headers.add('Access-Control-Allow-Credentials', 'true')
+            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control')
+            response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
+        
+        # Always add these headers for better CORS support
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,Access-Control-Allow-Headers,Access-Control-Request-Method,Access-Control-Request-Headers')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
         
         return response
     except Exception as e:

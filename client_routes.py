@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, current_app, send_file
-from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt, verify_jwt_in_request
 from werkzeug.utils import secure_filename
 import os
 import sys
@@ -796,9 +796,29 @@ def get_client_details(client_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@client_bp.route('/clients/<client_id>', methods=['PUT'])
-@jwt_required()
+@client_bp.route('/clients/<client_id>', methods=['PUT', 'OPTIONS'])
+@jwt_required(optional=True)
 def update_client(client_id):
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        origin = request.headers.get('Origin')
+        if origin:
+            response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control')
+        response.headers.add('Access-Control-Allow-Methods', 'PUT,OPTIONS')
+        response.headers.add('Access-Control-Max-Age', '86400')
+        return response
+    
+    # For PUT requests, require JWT
+    if request.method == 'PUT':
+        # Verify JWT token
+        try:
+            verify_jwt_in_request()
+        except Exception as e:
+            return jsonify({'error': 'Authentication required'}), 401
+    
     try:
         claims = get_jwt()
         user_role = claims.get('role')
@@ -866,9 +886,29 @@ def update_client(client_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@client_bp.route('/clients/<client_id>/update', methods=['PUT'])
-@jwt_required()
+@client_bp.route('/clients/<client_id>/update', methods=['PUT', 'OPTIONS'])
+@jwt_required(optional=True)
 def update_client_details(client_id):
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        origin = request.headers.get('Origin')
+        if origin:
+            response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control')
+        response.headers.add('Access-Control-Allow-Methods', 'PUT,OPTIONS')
+        response.headers.add('Access-Control-Max-Age', '86400')
+        return response
+    
+    # For PUT requests, require JWT
+    if request.method == 'PUT':
+        # Verify JWT token
+        try:
+            verify_jwt_in_request()
+        except Exception as e:
+            return jsonify({'error': 'Authentication required'}), 401
+    
     try:
         print(f"=== CLIENT UPDATE REQUEST ===")
         print(f"Client ID: {client_id}")
