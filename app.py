@@ -82,18 +82,18 @@ if flask_env == 'production':
 print(f"🌐 CORS Allowed Origins: {allowed_origins}")
 print(f"🔧 Flask Environment: {flask_env}")
 
-# Configure CORS with comprehensive settings
+# Configure CORS with specific origins only (no wildcards with credentials)
 cors.init_app(app, 
-    origins="*" if flask_env == 'development' else allowed_origins,
+    origins=allowed_origins,  # Always use specific origins
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
-    allow_headers="*",
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "Cache-Control"],
     supports_credentials=True,
     expose_headers=[
         "Content-Disposition",
         "Authorization",
         "Access-Control-Allow-Origin"
     ],
-    send_wildcard=True,
+    send_wildcard=False,  # Cannot use wildcard with credentials
     automatic_options=True,
     max_age=86400  # Cache preflight for 24 hours
 )
@@ -240,15 +240,9 @@ def validate_token():
             'timestamp': datetime.utcnow().isoformat()
         }), 401
 
-# Handle preflight OPTIONS requests and log protected endpoints
+# Log protected endpoint requests for debugging (CORS handled by Flask-CORS)
 @app.before_request
 def handle_requests():
-    # Handle preflight OPTIONS requests
-    if request.method == "OPTIONS":
-        # Let Flask-CORS handle the OPTIONS request completely
-        # Don't add any manual headers here as it causes duplicates
-        return
-    
     # Log protected endpoint requests for debugging
     if request.endpoint and any(protected in request.path for protected in ['/api/team', '/api/clients']):
         print(f"=== PROTECTED ENDPOINT REQUEST ===")
@@ -266,25 +260,21 @@ def handle_requests():
         else:
             print("No Bearer token found in Authorization header")
 
-# Add after_request handler for additional CORS support
+# Simplified after_request handler for dynamic Vercel origins only
 @app.after_request
 def after_request_cors_handler(response):
-    """Handle dynamic CORS for Vercel deployments and add debug info"""
+    """Handle dynamic CORS for new Vercel deployments only"""
     try:
         origin = request.headers.get('Origin')
         
-        # For production, dynamically allow Vercel origins that aren't in the static list
-        if flask_env == 'production' and origin and 'vercel.app' in origin:
-            # Add CORS headers for Vercel origins
-            response.headers.add('Access-Control-Allow-Origin', origin)
-            response.headers.add('Access-Control-Allow-Credentials', 'true')
-            response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control')
-            response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
-        
-        # Always add these headers for better CORS support
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,Access-Control-Allow-Headers,Access-Control-Request-Method,Access-Control-Request-Headers')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
-        
+        # Only handle new Vercel origins that aren't in the static allowed_origins list
+        if (flask_env == 'production' and origin and 'vercel.app' in origin and 
+            origin not in allowed_origins):
+            # Check if Flask-CORS already set the origin
+            if not response.headers.get('Access-Control-Allow-Origin'):
+                response.headers['Access-Control-Allow-Origin'] = origin
+                print(f"🔧 Added dynamic CORS origin: {origin}")
+            
         return response
     except Exception as e:
         print(f"CORS after_request error: {e}")

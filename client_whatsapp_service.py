@@ -303,6 +303,10 @@ Your IE Code has been successfully Completed.
 Thank you ! further any update means we will update you ,"""
                         result = self.whatsapp_service.send_message(formatted_number, message)
                         results.append(result)
+                    else:
+                        logger.info(f"IE Code document already existed, not sending duplicate notification for {legal_name}")
+                else:
+                    logger.info(f"No IE Code document uploaded, not sending notification for {legal_name}")
             
             # Check for payment gateway status updates
             if 'payment_gateways_status' in updated_fields:
@@ -360,9 +364,13 @@ Thank you!"""
                 
                 # Send general payment gateway update message when gateways are added but not yet approved/rejected
                 if 'payment_gateways' in updated_fields and not newly_approved_gateways and not newly_rejected_gateways:
-                    payment_gateways = client_data.get('payment_gateways', [])
-                    if payment_gateways:
-                        gateways_list = ", ".join(payment_gateways)
+                    current_payment_gateways = client_data.get('payment_gateways', [])
+                    old_payment_gateways = old_client_data.get('payment_gateways', []) if old_client_data else []
+                    
+                    # Only send message if there are new gateways (not already selected)
+                    new_gateways = [gateway for gateway in current_payment_gateways if gateway not in old_payment_gateways]
+                    if new_gateways:
+                        gateways_list = ", ".join(new_gateways)
                         message = f"""Hii {legal_name} sir/madam, 
 
 Selected payment gateway options ({gateways_list}) have been applied successfully. 
@@ -377,9 +385,14 @@ Thank you!"""
             
             # Also check for payment gateways being added without status changes
             elif 'payment_gateways' in updated_fields:
-                payment_gateways = client_data.get('payment_gateways', [])
-                if payment_gateways:
-                    gateways_list = ", ".join(payment_gateways)
+                # Check if payment gateways have actually changed
+                current_payment_gateways = client_data.get('payment_gateways', [])
+                old_payment_gateways = old_client_data.get('payment_gateways', []) if old_client_data else []
+                
+                # Only send message if there are new gateways (not already selected)
+                new_gateways = [gateway for gateway in current_payment_gateways if gateway not in old_payment_gateways]
+                if new_gateways:
+                    gateways_list = ", ".join(new_gateways)
                     message = f"""Hii {legal_name} sir/madam, 
 
 Selected payment gateway options ({gateways_list}) have been applied successfully. 
@@ -556,11 +569,15 @@ Thank you for keeping your information up to date with us!"""
 Your IE Code has been successfully uploaded. 
 
 Thank you for providing all the required documents!"""
+                        result = self.whatsapp_service.send_message(formatted_number, message)
+                        return result
                     else:
                         # Document was already present, don't send duplicate message
+                        logger.info(f"IE Code document already existed, not sending duplicate notification for {legal_name}")
                         return {'success': True, 'message': 'No new IE document uploaded'}
                 else:
                     # No IE document was actually uploaded
+                    logger.info(f"No IE Code document uploaded, not sending notification for {legal_name}")
                     return {'success': True, 'message': 'No IE document to send notification for'}
             
             elif update_type == 'new_current_account':
