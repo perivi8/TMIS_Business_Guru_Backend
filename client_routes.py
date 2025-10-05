@@ -1128,6 +1128,12 @@ def update_client_details(client_id):
         update_data['updated_by'] = current_user_id
         
         # Update client
+        # Get old client data before update for WhatsApp comparison
+        old_client = None
+        if WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
+            old_client = clients_collection.find_one({'_id': ObjectId(client_id)})
+        
+        # Update client
         result = clients_collection.update_one(
             {'_id': ObjectId(client_id)},
             {'$set': update_data}
@@ -1153,38 +1159,24 @@ def update_client_details(client_id):
                 )
         
         # Send WhatsApp notification for client update
-        whatsapp_result = None
+        whatsapp_results = []
         if WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
             try:
                 # Get updated client data
                 updated_client = clients_collection.find_one({'_id': ObjectId(client_id)})
                 
-                # Determine update type based on updated fields
+                # Send multiple WhatsApp messages for all changes
                 updated_fields = list(update_data.keys())
-                update_type = 'general_update'
+                # Pass old payment gateways status for comparison
+                if old_client and 'payment_gateways_status' in update_data:
+                    old_client['old_payment_gateways_status'] = old_client.get('payment_gateways_status', {})
+                whatsapp_results = client_whatsapp_service.send_multiple_client_update_messages(
+                    updated_client, updated_fields, old_client)
                 
-                # Check for specific update types
-                if any(field in updated_fields for field in ['legal_name', 'user_name', 'mobile_number', 'email', 'address', 'district', 'state', 'pincode']):
-                    update_type = 'personal_info'
-                elif 'ie_code' in updated_fields:
-                    # Check if IE Code was uploaded (not empty)
-                    if updated_client.get('ie_code') and updated_client.get('ie_code').strip():
-                        update_type = 'ie_document'
-                elif 'payment_gateways' in updated_fields:
-                    update_type = 'payment_gateway'
-                elif 'loan_status' in updated_fields and updated_client.get('loan_status') == 'approved':
-                    update_type = 'loan_approved'
-                
-                # Send appropriate WhatsApp message
-                if update_type == 'loan_approved':
-                    whatsapp_result = client_whatsapp_service.send_loan_approved_message(updated_client)
-                else:
-                    whatsapp_result = client_whatsapp_service.send_client_update_message(updated_client, update_type, updated_fields)
-                    
-                print(f"WhatsApp notification result: {whatsapp_result}")
+                print(f"WhatsApp notification results: {whatsapp_results}")
             except Exception as e:
                 print(f"Error sending WhatsApp notification: {str(e)}")
-                whatsapp_result = {'success': False, 'error': str(e)}
+                whatsapp_results = [{'success': False, 'error': str(e)}]
         
         print(f"✅ Client update completed successfully")
         response_data = {
@@ -1194,11 +1186,17 @@ def update_client_details(client_id):
             'updated_fields': list(update_data.keys())
         }
         
-        # Add WhatsApp result to response if attempted
-        if whatsapp_result is not None:
-            response_data['whatsapp_sent'] = whatsapp_result['success']
-            if not whatsapp_result['success']:
-                response_data['whatsapp_error'] = whatsapp_result.get('error', 'Unknown error')
+        # Add WhatsApp results to response if attempted
+        if whatsapp_results:
+            # Check if any message was sent successfully
+            success_count = sum(1 for result in whatsapp_results if result.get('success', False))
+            response_data['whatsapp_sent'] = success_count > 0
+            if success_count < len(whatsapp_results):
+                # If some failed, include error from first failure
+                for result in whatsapp_results:
+                    if not result.get('success', True):
+                        response_data['whatsapp_error'] = result.get('error', 'Some messages failed to send')
+                        break
         
         return jsonify(response_data), 200
         
