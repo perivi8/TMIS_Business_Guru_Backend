@@ -36,6 +36,10 @@ except ImportError as e:
     print(f"⚠️ Warning: Cloudinary not available: {e}")
     CLOUDINARY_AVAILABLE = False
     cloudinary = None
+except Exception as e:
+    print(f"⚠️ Warning: Cloudinary import failed: {e}")
+    CLOUDINARY_AVAILABLE = False
+    cloudinary = None
 
 # Try to import DocumentProcessor, but make it optional
 try:
@@ -50,6 +54,20 @@ except Exception as e:
     print(f"⚠️ Warning: DocumentProcessor import failed: {e}")
     DOCUMENT_PROCESSOR_AVAILABLE = False
     DocumentProcessor = None
+
+# Try to import ClientWhatsAppService, but make it optional
+try:
+    from client_whatsapp_service import client_whatsapp_service
+    WHATSAPP_SERVICE_AVAILABLE = True
+    print("✅ client_whatsapp_service imported successfully")
+except ImportError as e:
+    print(f"⚠️ Warning: client_whatsapp_service not available: {e}")
+    WHATSAPP_SERVICE_AVAILABLE = False
+    client_whatsapp_service = None
+except Exception as e:
+    print(f"⚠️ Warning: client_whatsapp_service import failed: {e}")
+    WHATSAPP_SERVICE_AVAILABLE = False
+    client_whatsapp_service = None
 
 # Load environment variables
 load_dotenv()
@@ -429,11 +447,29 @@ def create_client():
         # Insert client into database
         result = clients_collection.insert_one(client_data)
         
-        return jsonify({
+        # Send WhatsApp notification for new client
+        whatsapp_result = None
+        if WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
+            try:
+                whatsapp_result = client_whatsapp_service.send_new_client_message(client_data)
+                print(f"WhatsApp notification result: {whatsapp_result}")
+            except Exception as e:
+                print(f"Error sending WhatsApp notification: {str(e)}")
+                whatsapp_result = {'success': False, 'error': str(e)}
+        
+        response_data = {
             'message': 'Client created successfully',
             'client_id': str(result.inserted_id),
             'extracted_data': extracted_data
-        }), 201
+        }
+        
+        # Add WhatsApp result to response if attempted
+        if whatsapp_result is not None:
+            response_data['whatsapp_sent'] = whatsapp_result['success']
+            if not whatsapp_result['success']:
+                response_data['whatsapp_error'] = whatsapp_result.get('error', 'Unknown error')
+        
+        return jsonify(response_data), 201
         
     except Exception as e:
         print(f"Error creating client: {str(e)}")
@@ -1116,13 +1152,55 @@ def update_client_details(client_id):
                     update_type="updated"
                 )
         
+        # Send WhatsApp notification for client update
+        whatsapp_result = None
+        if WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
+            try:
+                # Get updated client data
+                updated_client = clients_collection.find_one({'_id': ObjectId(client_id)})
+                
+                # Determine update type based on updated fields
+                updated_fields = list(update_data.keys())
+                update_type = 'general_update'
+                
+                # Check for specific update types
+                if any(field in updated_fields for field in ['legal_name', 'user_name', 'mobile_number', 'email', 'address', 'district', 'state', 'pincode']):
+                    update_type = 'personal_info'
+                elif 'ie_code' in updated_fields:
+                    # Check if IE Code was uploaded (not empty)
+                    if updated_client.get('ie_code') and updated_client.get('ie_code').strip():
+                        update_type = 'ie_document'
+                elif 'payment_gateways' in updated_fields:
+                    update_type = 'payment_gateway'
+                elif 'loan_status' in updated_fields and updated_client.get('loan_status') == 'approved':
+                    update_type = 'loan_approved'
+                
+                # Send appropriate WhatsApp message
+                if update_type == 'loan_approved':
+                    whatsapp_result = client_whatsapp_service.send_loan_approved_message(updated_client)
+                else:
+                    whatsapp_result = client_whatsapp_service.send_client_update_message(updated_client, update_type, updated_fields)
+                    
+                print(f"WhatsApp notification result: {whatsapp_result}")
+            except Exception as e:
+                print(f"Error sending WhatsApp notification: {str(e)}")
+                whatsapp_result = {'success': False, 'error': str(e)}
+        
         print(f"✅ Client update completed successfully")
-        return jsonify({
+        response_data = {
             'success': True,
             'message': 'Client updated successfully',
             'client_id': client_id,
             'updated_fields': list(update_data.keys())
-        }), 200
+        }
+        
+        # Add WhatsApp result to response if attempted
+        if whatsapp_result is not None:
+            response_data['whatsapp_sent'] = whatsapp_result['success']
+            if not whatsapp_result['success']:
+                response_data['whatsapp_error'] = whatsapp_result.get('error', 'Unknown error')
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         print(f"❌ Error in update_client_details: {str(e)}")
