@@ -806,8 +806,8 @@ def update_client(client_id):
         if origin:
             response.headers.add('Access-Control-Allow-Origin', origin)
         response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control')
-        response.headers.add('Access-Control-Allow-Methods', 'PUT,OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,Access-Control-Allow-Headers,Access-Control-Request-Method,Access-Control-Request-Headers')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
         response.headers.add('Access-Control-Max-Age', '86400')
         return response
     
@@ -896,8 +896,8 @@ def update_client_details(client_id):
         if origin:
             response.headers.add('Access-Control-Allow-Origin', origin)
         response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control')
-        response.headers.add('Access-Control-Allow-Methods', 'PUT,OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,Access-Control-Allow-Headers,Access-Control-Request-Method,Access-Control-Request-Headers')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
         response.headers.add('Access-Control-Max-Age', '86400')
         return response
     
