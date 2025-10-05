@@ -1207,12 +1207,26 @@ def update_client_details(client_id):
                 
                 # Send multiple WhatsApp messages for all changes
                 updated_fields = list(update_data.keys())
+                
+                # Special handling for IE Code document uploads
+                # Check if IE Code document was uploaded in this update
+                if 'documents' in update_data:
+                    current_documents = update_data.get('documents', {})
+                    old_documents = old_client.get('documents', {}) if old_client else {}
+                    
+                    # If IE Code document is new, add it to updated_fields
+                    if ('ie_code_document' in current_documents and current_documents['ie_code_document'] and
+                        ('ie_code_document' not in old_documents or not old_documents['ie_code_document'])):
+                        if 'ie_code' not in updated_fields:
+                            updated_fields.append('ie_code')
+                        print(f"IE Code document detected as newly uploaded for client {client_id}")
+                
                 # Pass old payment gateways status for comparison
                 if old_client and 'payment_gateways_status' in update_data:
                     old_client['old_payment_gateways_status'] = old_client.get('payment_gateways_status', {})
                 whatsapp_results = client_whatsapp_service.send_multiple_client_update_messages(
                     updated_client, updated_fields, old_client)
-                
+                    
                 print(f"WhatsApp notification results: {whatsapp_results}")
             except Exception as e:
                 print(f"Error sending WhatsApp notification: {str(e)}")

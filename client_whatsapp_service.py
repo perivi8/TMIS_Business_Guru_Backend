@@ -258,8 +258,9 @@ Thank you !"""
                     results.append(result)
             
             # Check for new current account
-            if ('new_current_account' in updated_fields and client_data.get('new_current_account') == 'Yes' and
-                any(field in updated_fields for field in ['new_bank_name', 'new_account_name', 'new_bank_account_number', 'new_ifsc_code'])):
+            # Send notification when new_current_account is set to 'Yes'
+            # This should happen regardless of whether bank details are being updated in the same request
+            if 'new_current_account' in updated_fields and client_data.get('new_current_account') == 'Yes':
                 new_bank_name = client_data.get('new_bank_name', 'N/A')
                 new_account_name = client_data.get('new_account_name', 'N/A')
                 new_bank_account_number = client_data.get('new_bank_account_number', 'N/A')
@@ -307,6 +308,30 @@ Thank you ! further any update means we will update you ,"""
                         logger.info(f"IE Code document already existed, not sending duplicate notification for {legal_name}")
                 else:
                     logger.info(f"No IE Code document uploaded, not sending notification for {legal_name}")
+            
+            # Check for IE Code document uploads specifically (when uploaded in client edit page)
+            if 'documents' in updated_fields:
+                # Check if IE document exists in the documents field
+                documents = client_data.get('documents', {})
+                # Also check in old client data for comparison
+                old_documents = old_client_data.get('documents', {}) if old_client_data else {}
+                
+                # Send message only if IE document was actually uploaded and is new
+                if 'ie_code_document' in documents and documents['ie_code_document']:
+                    # Check if this is a new upload (not previously present)
+                    if 'ie_code_document' not in old_documents or not old_documents['ie_code_document']:
+                        message = f"""Hii {legal_name} sir/madam, 
+
+Your IE Code has been successfully Completed. 
+
+Thank you ! further any update means we will update you ,"""
+                        result = self.whatsapp_service.send_message(formatted_number, message)
+                        results.append(result)
+                        logger.info(f"IE Code document uploaded successfully, notification sent for {legal_name}")
+                    else:
+                        logger.info(f"IE Code document already existed, not sending duplicate notification for {legal_name}")
+                else:
+                    logger.info(f"No new IE Code document uploaded, not sending notification for {legal_name}")
             
             # Check for payment gateway status updates
             if 'payment_gateways_status' in updated_fields:
