@@ -706,7 +706,7 @@ def get_clients():
         return jsonify({'error': str(e), 'clients': []}), 500
 
 @client_bp.route('/clients/<client_id>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
-@jwt_required(optional=True)
+@jwt_required()
 def handle_client_requests(client_id):
     # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
@@ -859,19 +859,43 @@ def update_client(client_id):
             return jsonify({'error': 'Authentication required'}), 401
     
     try:
+        print(f"=== UPDATE CLIENT DEBUG ===")
+        print(f"Client ID: {client_id}")
+        print(f"Request method: {request.method}")
+        print(f"Content-Type: {request.content_type}")
+        print(f"Authorization header: {request.headers.get('Authorization', 'Missing')}")
+        
         claims = get_jwt()
         user_role = claims.get('role')
         current_user_id = get_jwt_identity()
+        user_email = claims.get('email', current_user_id)
+        
+        print(f"User ID: {current_user_id}")
+        print(f"User Role: {user_role}")
+        print(f"User Email: {user_email}")
+        print(f"JWT Claims: {claims}")
+        
+        # Find the client first to check permissions
+        client = clients_collection.find_one({'_id': ObjectId(client_id)})
+        if not client:
+            print(f"❌ Client not found: {client_id}")
+            return jsonify({'error': 'Client not found'}), 404
+        
+        print(f"Client found - Created by: {client.get('created_by')}")
+        print(f"Client name: {client.get('legal_name', client.get('user_name', 'Unknown'))}")
         
         data = request.get_json()
         status = data.get('status')
         feedback = data.get('feedback', '')
         comments = data.get('comments', '')
         
+        print(f"Update data - Status: {status}, Feedback: {feedback}, Comments: {comments}")
+        
         # Check permissions
         # Only admin can update status and feedback
         # Regular users can update comments
         if (status is not None or feedback is not None) and user_role != 'admin':
+            print(f"❌ Permission denied: Non-admin user trying to update status/feedback")
             return jsonify({'error': 'Unauthorized'}), 403
         
         # Prepare update data
@@ -1033,8 +1057,18 @@ def update_client_details(client_id):
             return jsonify({'error': 'Client not found'}), 404
         
         # Check permissions - admin can update all, users can update only their clients
+        print(f"=== PERMISSION CHECK ===")
+        print(f"User role: {user_role}")
+        print(f"Current user ID: {current_user_id}")
+        print(f"Client created by: {client.get('created_by')}")
+        print(f"Is admin: {user_role == 'admin'}")
+        print(f"Is owner: {client.get('created_by') == current_user_id}")
+        
         if user_role != 'admin' and client.get('created_by') != current_user_id:
+            print(f"❌ Permission denied: User {current_user_id} (role: {user_role}) cannot update client created by {client.get('created_by')}")
             return jsonify({'error': 'Unauthorized'}), 403
+        
+        print(f"✅ Permission granted for user {current_user_id} to update client {client_id}")
         
         # Handle form data with files
         if 'multipart/form-data' in request.content_type:
