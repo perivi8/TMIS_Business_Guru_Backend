@@ -723,13 +723,6 @@ def handle_client_requests(client_id):
     else:
         return jsonify({'error': 'Method not allowed'}), 405
 
-
-        return get_client_details(client_id)
-    elif request.method == 'DELETE':
-        return delete_client(client_id)
-    else:
-        return jsonify({'error': 'Method not allowed'}), 405
-
 def update_client(client_id):
     try:
         print(f"=== UPDATE CLIENT DEBUG ===")
