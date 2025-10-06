@@ -799,6 +799,37 @@ def update_client(client_id):
         # Prepare response with basic success message first
         response_data = {'message': 'Client updated successfully'}
         
+        # Add WhatsApp notification info to response if it's a comment update
+        if comments is not None:
+            # Send WhatsApp notification immediately for comment updates to get instant feedback
+            whatsapp_result = None
+            if WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
+                try:
+                    # Get updated client data
+                    updated_client = clients_collection.find_one({'_id': ObjectId(client_id)})
+                    whatsapp_result = client_whatsapp_service.send_comment_notification(updated_client, comments)
+                    logger.info(f"WhatsApp notification result for comment '{comments}': {whatsapp_result}")
+                except Exception as e:
+                    logger.error(f"Error sending WhatsApp notification for comment: {str(e)}")
+                    whatsapp_result = {'success': False, 'error': str(e)}
+            
+            # Add specific WhatsApp status to response for frontend feedback
+            if whatsapp_result:
+                if whatsapp_result.get('success', False):
+                    response_data['whatsapp_sent'] = True
+                else:
+                    response_data['whatsapp_sent'] = False
+                    error_msg = whatsapp_result.get('error', '').lower()
+                    if ('quota exceeded' in error_msg or 
+                        'monthly quota has been exceeded' in error_msg or
+                        whatsapp_result.get('status_code') == 466):
+                        response_data['whatsapp_quota_exceeded'] = True
+                    else:
+                        response_data['whatsapp_error'] = whatsapp_result.get('error', 'Failed to send WhatsApp message')
+            else:
+                # Indicate that a WhatsApp notification was attempted
+                response_data['whatsapp_notification'] = 'attempted'
+        
         # Send notifications asynchronously to avoid blocking the response
         def send_notifications():
             try:
