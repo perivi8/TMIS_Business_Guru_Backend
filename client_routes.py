@@ -739,6 +739,194 @@ def handle_client_requests(client_id):
     else:
         return jsonify({'error': 'Method not allowed'}), 405
 
+def update_client(client_id):
+    try:
+        print(f"=== UPDATE CLIENT DEBUG ===")
+        print(f"Client ID: {client_id}")
+        print(f"Request method: {request.method}")
+        print(f"Content-Type: {request.content_type}")
+        print(f"Authorization header: {request.headers.get('Authorization', 'Missing')}")
+        
+        claims = get_jwt()
+        user_role = claims.get('role')
+        current_user_id = get_jwt_identity()
+        user_email = claims.get('email', current_user_id)
+        
+        print(f"User ID: {current_user_id}")
+        print(f"User Role: {user_role}")
+        print(f"User Email: {user_email}")
+        print(f"JWT Claims: {claims}")
+        
+        # Find the client first to check permissions
+        client = clients_collection.find_one({'_id': ObjectId(client_id)})
+        if not client:
+            print(f"❌ Client not found: {client_id}")
+            response = jsonify({'error': 'Client not found'}), 404
+            # Add CORS headers
+            if isinstance(response, tuple):
+                resp, status = response
+                resp.headers.add('Access-Control-Allow-Origin', '*')
+                return resp, status
+            else:
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response
+        
+        print(f"Client found - Created by: {client.get('created_by')}")
+        print(f"Client name: {client.get('legal_name', client.get('user_name', 'Unknown'))}")
+        
+        data = request.get_json()
+        status = data.get('status')
+        feedback = data.get('feedback', '')
+        comments = data.get('comments', '')
+        
+        print(f"Update data - Status: {status}, Feedback: {feedback}, Comments: {comments}")
+        
+        # Check permissions
+        # Only admin can update status and feedback
+        # Regular users can update comments on their own clients
+        if (status is not None or feedback is not None) and user_role != 'admin':
+            print(f"❌ Permission denied: Non-admin user trying to update status/feedback")
+            response = jsonify({'error': 'Unauthorized'}), 403
+            # Add CORS headers
+            if isinstance(response, tuple):
+                resp, status = response
+                resp.headers.add('Access-Control-Allow-Origin', '*')
+                return resp, status
+            else:
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response
+        
+        # Check if regular user is trying to update someone else's client
+        if user_role != 'admin' and client.get('created_by') != current_user_id:
+            print(f"❌ Permission denied: User {current_user_id} cannot update client created by {client.get('created_by')}")
+            response = jsonify({'error': 'Unauthorized'}), 403
+            # Add CORS headers
+            if isinstance(response, tuple):
+                resp, status = response
+                resp.headers.add('Access-Control-Allow-Origin', '*')
+                return resp, status
+            else:
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response
+        
+        # Prepare update data
+        update_fields = {
+            'updated_at': datetime.utcnow(),
+            'updated_by': current_user_id
+        }
+        
+        # Only add fields that are provided and user has permission to update
+        if status is not None and user_role == 'admin':
+            update_fields['status'] = status
+        if feedback is not None and user_role == 'admin':
+            update_fields['feedback'] = feedback
+        # Comments can be updated by both admin and regular users (if they own the client)
+        if comments is not None:
+            update_fields['comments'] = comments
+        
+        # Update client
+        result = clients_collection.update_one(
+            {'_id': ObjectId(client_id)},
+            {'$set': update_fields}
+        )
+        
+        if result.matched_count == 0:
+            response = jsonify({'error': 'Client not found'}), 404
+            # Add CORS headers
+            if isinstance(response, tuple):
+                resp, status = response
+                resp.headers.add('Access-Control-Allow-Origin', '*')
+                return resp, status
+            else:
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response
+        
+        # Get client data for notifications
+        client = clients_collection.find_one({'_id': ObjectId(client_id)})
+        
+        # Prepare response with basic success message first
+        response_data = {'message': 'Client updated successfully'}
+        
+        # Send notifications asynchronously to avoid blocking the response
+        def send_notifications():
+            try:
+                import time
+                time.sleep(0.1)  # Small delay to ensure response is sent first
+                
+                # Send WhatsApp notification for comment updates
+                whatsapp_result = None
+                if comments is not None and WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
+                    try:
+                        whatsapp_result = client_whatsapp_service.send_comment_notification(client, comments)
+                        logger.info(f"WhatsApp notification result for comment '{comments}': {whatsapp_result}")
+                    except Exception as e:
+                        logger.error(f"Error sending WhatsApp notification for comment: {str(e)}")
+                        whatsapp_result = {'success': False, 'error': str(e)}
+                
+                # Send comprehensive email notification using email service
+                try:
+                    admin_name = get_admin_name(current_user_id)
+                    tmis_users = get_tmis_users()
+                    
+                    print(f"Sending email notification for client update:")
+                    print(f"Admin: {admin_name}")
+                    print(f"TMIS Users found: {len(tmis_users)}")
+                    print(f"Client user_email: {client.get('user_email', 'None')}")
+                    print(f"Client company_email: {client.get('company_email', 'None')}")
+                    
+                    # Send email notification to all relevant parties
+                    if EMAIL_SERVICE_AVAILABLE and email_service:
+                        email_sent = email_service.send_client_update_notification(
+                            client_data=client,
+                            admin_name=admin_name,
+                            tmis_users=tmis_users,
+                            update_type="status updated"
+                        )
+                        
+                        if email_sent:
+                            print("Email notification sent successfully")
+                        else:
+                            print("Failed to send email notification")
+                    else:
+                        print("Email service not available - skipping notification")
+                        
+                except Exception as e:
+                    print(f"Error sending email notification: {str(e)}")
+            except Exception as e:
+                print(f"Error in async notifications: {str(e)}")
+        
+        # Start the notification sending in a separate thread if it's a comment update
+        if comments is not None:
+            import threading
+            notification_thread = threading.Thread(target=send_notifications)
+            notification_thread.daemon = True  # Daemon thread will not prevent app from exiting
+            notification_thread.start()
+        
+        # Add CORS headers and return response immediately
+        response = jsonify(response_data), 200
+        # Add CORS headers
+        if isinstance(response, tuple):
+            resp, status = response
+            resp.headers.add('Access-Control-Allow-Origin', '*')
+            return resp, status
+        else:
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response
+        
+    except Exception as e:
+        print(f"Error in update_client: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        response = jsonify({'error': str(e)}), 500
+        # Add CORS headers
+        if isinstance(response, tuple):
+            resp, status = response
+            resp.headers.add('Access-Control-Allow-Origin', '*')
+            return resp, status
+        else:
+            response.headers.add('Access-Control-Allow-Origin', '*')
+            return response
+
 @client_bp.route('/clients/<client_id>', methods=['GET'])
 @jwt_required()
 def get_client_details(client_id):
@@ -831,158 +1019,6 @@ def get_client_details(client_id):
                     client['documents'][doc_type] = file_info['url']
         
         return jsonify({'client': client}), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@client_bp.route('/clients/<client_id>', methods=['PUT', 'OPTIONS'])
-@jwt_required()
-def update_client(client_id):
-    # Handle preflight OPTIONS request
-    if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        origin = request.headers.get('Origin')
-        if origin:
-            response.headers.add('Access-Control-Allow-Origin', origin)
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,Access-Control-Allow-Headers,Access-Control-Request-Method,Access-Control-Request-Headers')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
-        response.headers.add('Access-Control-Max-Age', '86400')
-        return response
-    
-    # For PUT requests, require JWT
-    if request.method == 'PUT':
-        # Verify JWT token
-        try:
-            verify_jwt_in_request()
-        except Exception as e:
-            return jsonify({'error': 'Authentication required'}), 401
-    
-    try:
-        print(f"=== UPDATE CLIENT DEBUG ===")
-        print(f"Client ID: {client_id}")
-        print(f"Request method: {request.method}")
-        print(f"Content-Type: {request.content_type}")
-        print(f"Authorization header: {request.headers.get('Authorization', 'Missing')}")
-        
-        claims = get_jwt()
-        user_role = claims.get('role')
-        current_user_id = get_jwt_identity()
-        user_email = claims.get('email', current_user_id)
-        
-        print(f"User ID: {current_user_id}")
-        print(f"User Role: {user_role}")
-        print(f"User Email: {user_email}")
-        print(f"JWT Claims: {claims}")
-        
-        # Find the client first to check permissions
-        client = clients_collection.find_one({'_id': ObjectId(client_id)})
-        if not client:
-            print(f"❌ Client not found: {client_id}")
-            return jsonify({'error': 'Client not found'}), 404
-        
-        print(f"Client found - Created by: {client.get('created_by')}")
-        print(f"Client name: {client.get('legal_name', client.get('user_name', 'Unknown'))}")
-        
-        data = request.get_json()
-        status = data.get('status')
-        feedback = data.get('feedback', '')
-        comments = data.get('comments', '')
-        
-        print(f"Update data - Status: {status}, Feedback: {feedback}, Comments: {comments}")
-        
-        # Check permissions
-        # Only admin can update status and feedback
-        # Regular users can update comments
-        if (status is not None or feedback is not None) and user_role != 'admin':
-            print(f"❌ Permission denied: Non-admin user trying to update status/feedback")
-            return jsonify({'error': 'Unauthorized'}), 403
-        
-        # Prepare update data
-        update_fields = {
-            'updated_at': datetime.utcnow(),
-            'updated_by': current_user_id
-        }
-        
-        # Only add fields that are provided and user has permission to update
-        if status is not None and user_role == 'admin':
-            update_fields['status'] = status
-        if feedback is not None and user_role == 'admin':
-            update_fields['feedback'] = feedback
-        # Comments can be updated by both admin and regular users
-        if comments is not None:
-            update_fields['comments'] = comments
-        
-        # Update client
-        result = clients_collection.update_one(
-            {'_id': ObjectId(client_id)},
-            {'$set': update_fields}
-        )
-        
-        if result.matched_count == 0:
-            return jsonify({'error': 'Client not found'}), 404
-        
-        # Get client data for notifications
-        client = clients_collection.find_one({'_id': ObjectId(client_id)})
-        
-        # Send WhatsApp notification for comment updates
-        whatsapp_result = None
-        if comments is not None and WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
-            try:
-                whatsapp_result = client_whatsapp_service.send_comment_notification(client, comments)
-                logger.info(f"WhatsApp notification result for comment '{comments}': {whatsapp_result}")
-            except Exception as e:
-                logger.error(f"Error sending WhatsApp notification for comment: {str(e)}")
-                whatsapp_result = {'success': False, 'error': str(e)}
-        
-        # Send comprehensive email notification using email service
-        try:
-            admin_name = get_admin_name(current_user_id)
-            tmis_users = get_tmis_users()
-            
-            print(f"Sending email notification for client update:")
-            print(f"Admin: {admin_name}")
-            print(f"TMIS Users found: {len(tmis_users)}")
-            print(f"Client user_email: {client.get('user_email', 'None')}")
-            print(f"Client company_email: {client.get('company_email', 'None')}")
-            
-            # Send email notification to all relevant parties
-            if EMAIL_SERVICE_AVAILABLE and email_service:
-                email_sent = email_service.send_client_update_notification(
-                    client_data=client,
-                    admin_name=admin_name,
-                    tmis_users=tmis_users,
-                    update_type="status updated"
-                )
-                
-                if email_sent:
-                    print("Email notification sent successfully")
-                else:
-                    print("Failed to send email notification")
-            else:
-                print("Email service not available - skipping notification")
-                
-        except Exception as e:
-            print(f"Error sending email notification: {str(e)}")
-        
-        # Prepare response with WhatsApp status
-        response_data = {'message': 'Client updated successfully'}
-        
-        # Add WhatsApp result to response if attempted
-        if whatsapp_result is not None:
-            response_data['whatsapp_sent'] = whatsapp_result['success']
-            if not whatsapp_result['success']:
-                # Check for quota exceeded error
-                error_msg = whatsapp_result.get('error', '').lower()
-                if ('quota exceeded' in error_msg or 
-                    'monthly quota has been exceeded' in error_msg or
-                    whatsapp_result.get('status_code') == 466):
-                    response_data['whatsapp_quota_exceeded'] = True
-                    response_data['message'] = 'Client updated successfully, but WhatsApp message not sent due to limit reached'
-                else:
-                    response_data['whatsapp_error'] = whatsapp_result.get('error', 'Unknown error')
-        
-        return jsonify(response_data), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
