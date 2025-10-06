@@ -711,28 +711,19 @@ def handle_client_requests(client_id):
     # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
-        # Add CORS headers
-        origin = request.headers.get('Origin')
-        if origin in [
-            'https://tmis-business-guru.vercel.app',
-            'https://tmis-business-guru-frontend.vercel.app',
-            'http://localhost:4200',
-            'http://localhost:4201'
-        ] or (origin and 'vercel.app' in origin):
-            response.headers.add('Access-Control-Allow-Origin', origin)
-        else:
-            response.headers.add('Access-Control-Allow-Origin', '*')
-        
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,Access-Control-Allow-Headers,Access-Control-Request-Method,Access-Control-Request-Headers')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
-        response.headers.add('Access-Control-Max-Age', '86400')
         return response
     
     # Handle actual requests
     if request.method == 'PUT':
         return update_client(client_id)
     elif request.method == 'GET':
+        return get_client_details(client_id)
+    elif request.method == 'DELETE':
+        return delete_client(client_id)
+    else:
+        return jsonify({'error': 'Method not allowed'}), 405
+
+
         return get_client_details(client_id)
     elif request.method == 'DELETE':
         return delete_client(client_id)
@@ -761,15 +752,7 @@ def update_client(client_id):
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
         if not client:
             print(f"❌ Client not found: {client_id}")
-            response = jsonify({'error': 'Client not found'}), 404
-            # Add CORS headers
-            if isinstance(response, tuple):
-                resp, status = response
-                resp.headers.add('Access-Control-Allow-Origin', '*')
-                return resp, status
-            else:
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response
+            return jsonify({'error': 'Client not found'}), 404
         
         print(f"Client found - Created by: {client.get('created_by')}")
         print(f"Client name: {client.get('legal_name', client.get('user_name', 'Unknown'))}")
@@ -786,28 +769,12 @@ def update_client(client_id):
         # Regular users can update comments on their own clients
         if (status is not None or feedback is not None) and user_role != 'admin':
             print(f"❌ Permission denied: Non-admin user trying to update status/feedback")
-            response = jsonify({'error': 'Unauthorized'}), 403
-            # Add CORS headers
-            if isinstance(response, tuple):
-                resp, status = response
-                resp.headers.add('Access-Control-Allow-Origin', '*')
-                return resp, status
-            else:
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response
+            return jsonify({'error': 'Unauthorized'}), 403
         
         # Check if regular user is trying to update someone else's client
         if user_role != 'admin' and client.get('created_by') != current_user_id:
             print(f"❌ Permission denied: User {current_user_id} cannot update client created by {client.get('created_by')}")
-            response = jsonify({'error': 'Unauthorized'}), 403
-            # Add CORS headers
-            if isinstance(response, tuple):
-                resp, status = response
-                resp.headers.add('Access-Control-Allow-Origin', '*')
-                return resp, status
-            else:
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response
+            return jsonify({'error': 'Unauthorized'}), 403
         
         # Prepare update data
         update_fields = {
@@ -831,15 +798,7 @@ def update_client(client_id):
         )
         
         if result.matched_count == 0:
-            response = jsonify({'error': 'Client not found'}), 404
-            # Add CORS headers
-            if isinstance(response, tuple):
-                resp, status = response
-                resp.headers.add('Access-Control-Allow-Origin', '*')
-                return resp, status
-            else:
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response
+            return jsonify({'error': 'Client not found'}), 404
         
         # Get client data for notifications
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
@@ -902,30 +861,14 @@ def update_client(client_id):
             notification_thread.daemon = True  # Daemon thread will not prevent app from exiting
             notification_thread.start()
         
-        # Add CORS headers and return response immediately
-        response = jsonify(response_data), 200
-        # Add CORS headers
-        if isinstance(response, tuple):
-            resp, status = response
-            resp.headers.add('Access-Control-Allow-Origin', '*')
-            return resp, status
-        else:
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
+        # Return response immediately
+        return jsonify(response_data), 200
         
     except Exception as e:
         print(f"Error in update_client: {str(e)}")
         import traceback
         traceback.print_exc()
-        response = jsonify({'error': str(e)}), 500
-        # Add CORS headers
-        if isinstance(response, tuple):
-            resp, status = response
-            resp.headers.add('Access-Control-Allow-Origin', '*')
-            return resp, status
-        else:
-            response.headers.add('Access-Control-Allow-Origin', '*')
-            return response
+        return jsonify({'error': str(e)}), 500
 
 @client_bp.route('/clients/<client_id>', methods=['GET'])
 @jwt_required()
