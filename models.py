@@ -22,7 +22,7 @@ class Client:
     def __init__(self, user_name, mobile_number, email, business_name, district, 
                  business_pan, ie_code, new_current_account, website, gateway,
                  transaction_done_by_client, required_loan_amount, bank_account,
-                 staff_id, bank_type, gst_status, documents=None, business_nature=None):
+                 staff_id, bank_type, gst_status, documents=None, business_nature=None, comments=None):
         self.user_name = user_name
         self.mobile_number = mobile_number
         self.email = email
@@ -40,6 +40,7 @@ class Client:
         self.bank_type = bank_type
         self.gst_status = gst_status
         self.business_nature = business_nature
+        self.comments = comments
         self.documents = documents or {}
         self.status = 'pending'  # pending, interested, not_interested, hold
         self.feedback = ''
@@ -65,6 +66,7 @@ class Client:
             'bank_type': self.bank_type,
             'gst_status': self.gst_status,
             'business_nature': self.business_nature,
+            'comments': self.comments,
             'documents': self.documents,
             'status': self.status,
             'feedback': self.feedback,

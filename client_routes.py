@@ -10,6 +10,11 @@ import json
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import traceback
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Try to import email_service, but make it optional
 try:
@@ -797,7 +802,7 @@ def get_client_details(client_id):
         return jsonify({'error': str(e)}), 500
 
 @client_bp.route('/clients/<client_id>', methods=['PUT', 'OPTIONS'])
-@jwt_required(optional=True)
+@jwt_required()
 def update_client(client_id):
     # Handle preflight OPTIONS request
     if request.method == 'OPTIONS':
@@ -822,34 +827,53 @@ def update_client(client_id):
     try:
         claims = get_jwt()
         user_role = claims.get('role')
-        
-        # Only admin can update client status and feedback
-        if user_role != 'admin':
-            return jsonify({'error': 'Unauthorized'}), 403
+        current_user_id = get_jwt_identity()
         
         data = request.get_json()
         status = data.get('status')
         feedback = data.get('feedback', '')
+        comments = data.get('comments', '')
+        
+        # Check permissions
+        # Only admin can update status and feedback
+        # Regular users can update comments
+        if (status is not None or feedback is not None) and user_role != 'admin':
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Prepare update data
+        update_fields = {
+            'updated_at': datetime.utcnow(),
+            'updated_by': current_user_id
+        }
+        
+        # Only add fields that are provided and user has permission to update
+        if status is not None and user_role == 'admin':
+            update_fields['status'] = status
+        if feedback is not None and user_role == 'admin':
+            update_fields['feedback'] = feedback
+        # Comments can be updated by both admin and regular users
+        if comments is not None:
+            update_fields['comments'] = comments
         
         # Update client
-        current_user_id = get_jwt_identity()
         result = clients_collection.update_one(
             {'_id': ObjectId(client_id)},
-            {
-                '$set': {
-                    'status': status,
-                    'feedback': feedback,
-                    'updated_at': datetime.utcnow(),
-                    'updated_by': current_user_id
-                }
-            }
+            {'$set': update_fields}
         )
         
         if result.matched_count == 0:
             return jsonify({'error': 'Client not found'}), 404
         
-        # Get client data for email notification
+        # Get client data for notifications
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
+        
+        # Send WhatsApp notification for comment updates
+        if comments is not None and WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
+            try:
+                whatsapp_result = client_whatsapp_service.send_comment_notification(client, comments)
+                logger.info(f"WhatsApp notification result for comment '{comments}': {whatsapp_result}")
+            except Exception as e:
+                logger.error(f"Error sending WhatsApp notification for comment: {str(e)}")
         
         # Send comprehensive email notification using email service
         try:
@@ -980,7 +1004,7 @@ def update_client_details(client_id):
                 'gst_legal_name', 'gst_trade_name', 'business_pan_name', 
                 'business_pan_date', 'owner_name', 'owner_dob', 'has_business_pan',
                 'business_url', 'feedback', 'status', 'new_business_account',
-                'transaction_months', 'loan_status',
+                'transaction_months', 'loan_status', 'comments',
                 # New bank details fields
                 'new_bank_account_number', 'new_ifsc_code', 'new_account_name', 'new_bank_name',
                 # Payment gateways fields
@@ -1182,21 +1206,34 @@ def update_client_details(client_id):
         if result.matched_count == 0:
             return jsonify({'error': 'Client not found'}), 404
         
-        # Send email notification if admin made changes
+        # Send email notification if admin made changes (but NOT for comment-only updates)
         if user_role == 'admin':
-            # Get updated client data
-            updated_client = clients_collection.find_one({'_id': ObjectId(client_id)})
-            admin_name = get_admin_name(current_user_id)
-            tmis_users = get_tmis_users()
+            # Check if this is a comment-only update
+            is_comment_only_update = (
+                len(update_data) <= 3 and  # Only updated_at, updated_by, and comments
+                'comments' in update_data and
+                'updated_at' in update_data and
+                'updated_by' in update_data
+            )
             
-            # Send email notification to all relevant parties
-            if EMAIL_SERVICE_AVAILABLE and email_service:
-                email_service.send_client_update_notification(
-                    client_data=updated_client,
-                    admin_name=admin_name,
-                    tmis_users=tmis_users,
-                    update_type="updated"
-                )
+            # Only send email for non-comment updates
+            if not is_comment_only_update:
+                # Get updated client data
+                updated_client = clients_collection.find_one({'_id': ObjectId(client_id)})
+                admin_name = get_admin_name(current_user_id)
+                tmis_users = get_tmis_users()
+                
+                # Send email notification to all relevant parties
+                if EMAIL_SERVICE_AVAILABLE and email_service:
+                    email_service.send_client_update_notification(
+                        client_data=updated_client,
+                        admin_name=admin_name,
+                        tmis_users=tmis_users,
+                        update_type="updated"
+                    )
+                    print(f"📧 Email notification sent for client update (non-comment)")
+                else:
+                    print(f"📧 Email notification skipped - comment-only update")
         
         # Send WhatsApp notification for client update
         whatsapp_results = []
@@ -1245,6 +1282,20 @@ def update_client_details(client_id):
             # Check if any message was sent successfully
             success_count = sum(1 for result in whatsapp_results if result.get('success', False))
             response_data['whatsapp_sent'] = success_count > 0
+            
+            # Check for quota exceeded errors
+            quota_exceeded = False
+            for result in whatsapp_results:
+                if not result.get('success', True):
+                    error_msg = result.get('error', '').lower()
+                    if ('quota exceeded' in error_msg or 
+                        'monthly quota has been exceeded' in error_msg or
+                        result.get('status_code') == 466):
+                        quota_exceeded = True
+                        break
+            
+            response_data['whatsapp_quota_exceeded'] = quota_exceeded
+            
             if success_count < len(whatsapp_results):
                 # If some failed, include error from first failure
                 for result in whatsapp_results:

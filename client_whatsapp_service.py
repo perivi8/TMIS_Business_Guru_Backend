@@ -8,6 +8,7 @@ import os
 import logging
 from typing import Dict, Any
 from greenapi_whatsapp_service import GreenAPIWhatsAppService
+from comment_templates import CommentTemplatesService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,7 @@ class ClientWhatsAppService:
     
     def __init__(self):
         self.whatsapp_service = GreenAPIWhatsAppService()
+        self.comment_templates = CommentTemplatesService()
         self.api_available = self.whatsapp_service.api_available
         logger.info(f"🔧 Client WhatsApp Service initialized: {'Available' if self.api_available else 'Not Available'}")
     
@@ -40,6 +42,25 @@ class ClientWhatsAppService:
             return ''
         
         return clean_number
+    
+    def send_comment_notification(self, client_data: Dict[str, Any], comment: str) -> Dict[str, Any]:
+        """
+        Send WhatsApp notification when comment is selected
+        
+        Args:
+            client_data (dict): Client information
+            comment (str): Selected comment from dropdown
+            
+        Returns:
+            Dict: Result of message sending
+        """
+        if not self.api_available:
+            return {
+                'success': False,
+                'error': 'WhatsApp service not available'
+            }
+        
+        return self.comment_templates.send_comment_notification(self, client_data, comment)
     
     def send_new_client_message(self, client_data: Dict[str, Any]) -> Dict[str, Any]:
         """

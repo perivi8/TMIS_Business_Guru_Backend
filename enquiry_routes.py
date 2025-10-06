@@ -5,6 +5,7 @@ from bson import ObjectId
 from datetime import datetime
 import os
 import logging
+import time
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -376,6 +377,8 @@ def create_enquiry():
                     serialized_enquiry['whatsapp_message_id'] = whatsapp_result.get('message_id')
                     serialized_enquiry['whatsapp_message_type'] = message_type
                     serialized_enquiry['whatsapp_error'] = None
+                    # Add notification
+                    serialized_enquiry['whatsapp_notification'] = whatsapp_result.get('notification', 'WhatsApp message sent successfully')
                 else:
                     error_msg = whatsapp_result.get('error', 'Unknown error')
                     solution = whatsapp_result.get('solution', '')
@@ -406,6 +409,10 @@ def create_enquiry():
                     
                     serialized_enquiry['whatsapp_sent'] = False
                     serialized_enquiry['whatsapp_error'] = user_friendly_error
+                    
+                    # Add notification for quota exceeded
+                    if status_code == 466 or "quota exceeded" in error_msg.lower():
+                        serialized_enquiry['whatsapp_notification'] = "⚠️ GreenAPI monthly quota exceeded. Please upgrade your GreenAPI plan to send messages to more numbers."
                     
                     # Also include the original error for debugging
                     if solution:
@@ -554,6 +561,8 @@ def update_enquiry(enquiry_id):
                         serialized_enquiry['whatsapp_message_id'] = whatsapp_result.get('message_id')
                         serialized_enquiry['whatsapp_message_type'] = message_type
                         serialized_enquiry['whatsapp_error'] = None
+                        # Add notification
+                        serialized_enquiry['whatsapp_notification'] = whatsapp_result.get('notification', 'WhatsApp message sent successfully')
                     else:
                         error_msg = whatsapp_result.get('error', 'Unknown error')
                         solution = whatsapp_result.get('solution', '')
@@ -584,6 +593,10 @@ def update_enquiry(enquiry_id):
                         
                         serialized_enquiry['whatsapp_sent'] = False
                         serialized_enquiry['whatsapp_error'] = user_friendly_error
+                        
+                        # Add notification for quota exceeded
+                        if status_code == 466 or "quota exceeded" in error_msg.lower():
+                            serialized_enquiry['whatsapp_notification'] = "⚠️ GreenAPI monthly quota exceeded. Please upgrade your GreenAPI plan to send messages to more numbers."
                         
                         # Also include the original error for debugging
                         if solution:
@@ -712,6 +725,9 @@ def test_whatsapp():
         mobile_number = data['mobile_number']
         message_type = data.get('message_type', 'new_enquiry')
         
+        # Log the incoming data for debugging
+        logger.info(f"📱 WhatsApp test request - User: {current_user}, Mobile: {mobile_number}, Type: {message_type}")
+        
         # Create test enquiry data
         test_enquiry = {
             'wati_name': data.get('wati_name', 'Test Customer'),
@@ -782,6 +798,7 @@ def test_whatsapp():
         else:
             error_msg = result.get('error', 'Unknown error')
             solution = result.get('solution', '')
+            status_code = result.get('status_code', 400)  # Default to 400 for client errors
             
             response_data = {
                 'success': False,
@@ -798,23 +815,74 @@ def test_whatsapp():
             if 'response' in result:
                 response_data['api_response'] = result['response']
             
-            # Special handling for quota exceeded errors
-            if 'quota exceeded' in error_msg.lower() or result.get('status_code') == 466:
-                response_data['quota_exceeded'] = True
-                response_data['solution'] = 'Upgrade your GreenAPI plan to send messages to more numbers. Visit https://console.green-api.com to upgrade.'
+            # Special handling for quota exceeded errors (466 or specific error messages)
+            if 'quota exceeded' in error_msg.lower() or 'monthly quota' in error_msg.lower() or status_code == 466:
+                # For testing purposes, allow testing to any number by returning success
+                # This allows admins to test WhatsApp functionality even when quota is exceeded
+                logger.info(f"Quota exceeded for user {current_user}, but allowing test for {mobile_number}")
+                return jsonify({
+                    'success': True,
+                    'message': f'WhatsApp test message simulated successfully (Quota exceeded - Mock response)',
+                    'message_id': f'mock_test_{mobile_number}',
+                    'mobile_number': mobile_number,
+                    'message_type': message_type,
+                    'mock_response': True,
+                    'quota_exceeded': True,
+                    'note': 'This is a simulated response since GreenAPI quota is exceeded. Upgrade plan for real messaging.'
+                }), 200
+            
+            # Special handling for phone number format errors
+            elif 'bad request' in error_msg.lower() or status_code == 400:
+                response_data['solution'] = 'Ensure the phone number is in international format (e.g., +919876543210) and the recipient has WhatsApp. Numbers should contain only digits and optional country code prefix.'
             
             if solution:
                 response_data['solution'] = solution
                 response_data['detailed_error'] = f"{error_msg}. Solution: {solution}"
             
-            # Return 400 for client errors, but with more specific information
-            return jsonify(response_data), 400
+            # Return appropriate status code based on error type
+            # Use 466 for quota exceeded to distinguish from other errors
+            final_status_code = 466 if response_data.get('quota_exceeded') else (status_code if status_code in [400, 401, 403, 404, 466] else 400)
+            return jsonify(response_data), final_status_code
             
     except Exception as e:
         logger.error(f"Error testing WhatsApp: {str(e)}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({'error': f'WhatsApp test failed: {str(e)}'}), 500
+
+@enquiry_bp.route('/whatsapp/test-unlimited', methods=['POST'])
+@jwt_required()
+def test_whatsapp_unlimited():
+    """Test WhatsApp message sending - Always allows testing regardless of quota"""
+    try:
+        current_user = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or 'mobile_number' not in data:
+            return jsonify({'error': 'Mobile number is required'}), 400
+        
+        mobile_number = data['mobile_number']
+        message_type = data.get('message_type', 'new_enquiry')
+        wati_name = data.get('wati_name', 'Test Customer')
+        
+        logger.info(f"📱 WhatsApp unlimited test request - User: {current_user}, Mobile: {mobile_number}")
+        
+        # Always return success for testing purposes
+        # This allows testing UI functionality without quota restrictions
+        return jsonify({
+            'success': True,
+            'message': f'WhatsApp test message simulated successfully for {wati_name}',
+            'message_id': f'test_unlimited_{mobile_number}_{int(time.time())}',
+            'mobile_number': mobile_number,
+            'message_type': message_type,
+            'wati_name': wati_name,
+            'test_mode': True,
+            'note': 'This is a test simulation that bypasses quota restrictions. Use regular /whatsapp/test for real messaging.'
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in unlimited WhatsApp test: {str(e)}")
+        return jsonify({'error': f'Test failed: {str(e)}'}), 500
 
 @enquiry_bp.route('/whatsapp/greenapi-test', methods=['POST'])
 @jwt_required()

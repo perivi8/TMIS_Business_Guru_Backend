@@ -120,6 +120,8 @@ class GreenAPIWhatsAppService:
                 elif response.status_code == 466:
                     # Special handling for GreenAPI quota exceeded error
                     error_msg = response_data.get('invokeStatus', {}).get('description', 'Monthly quota exceeded')
+                    if not error_msg or error_msg == 'Monthly quota exceeded':
+                        error_msg = 'Monthly quota has been exceeded. Upgrade your GreenAPI plan to send to more numbers'
                 else:
                     error_msg = response_data.get('message', f'Unknown GreenAPI error (Status: {response.status_code})')
                 
@@ -138,9 +140,9 @@ class GreenAPIWhatsAppService:
                 elif response.status_code == 404:
                     detailed_error += ' (Not Found - Check API endpoint)'
                 elif response.status_code == 466:
-                    detailed_error += ' (Quota exceeded - Upgrade your GreenAPI plan to send to more numbers)'
+                    detailed_error += ' (Monthly quota exceeded - Upgrade your GreenAPI plan to send to more numbers. Test number 8106811285 still works)'
                 
-                return {
+                result = {
                     'success': False,
                     'error': detailed_error,
                     'service': 'GreenAPI',
@@ -149,6 +151,15 @@ class GreenAPIWhatsAppService:
                     'original_phone_number': phone_number,
                     'formatted_phone_number': formatted_number
                 }
+                
+                # Add quota-specific information for 466 errors
+                if response.status_code == 466:
+                    result['quota_exceeded'] = True
+                    result['working_test_number'] = '8106811285'
+                    result['upgrade_url'] = 'https://console.green-api.com'
+                    result['solution'] = 'Upgrade GreenAPI plan or use test number 8106811285'
+                
+                return result
                 
         except requests.exceptions.RequestException as e:
             logger.error(f"❌ GreenAPI Network error: {str(e)}")
@@ -171,22 +182,42 @@ class GreenAPIWhatsAppService:
     
     def _format_phone_number(self, phone_number: str) -> str:
         """Format phone number for GreenAPI"""
+        # Handle None or empty phone number
+        if not phone_number:
+            logger.warning("📱 _format_phone_number - Empty phone number provided")
+            return ""
+        
         # Remove any non-digit characters
-        clean_number = ''.join(filter(str.isdigit, phone_number))
+        clean_number = ''.join(filter(str.isdigit, str(phone_number)))
         
         logger.info(f"📱 _format_phone_number - Input: {phone_number}, Cleaned: {clean_number}, Length: {len(clean_number)}")
         
         # Handle different cases based on number length
-        if len(clean_number) == 10:
+        if len(clean_number) == 0:
+            logger.warning(f"   ⚠️ Invalid phone number format (empty): {phone_number}")
+            return ""
+        elif len(clean_number) < 10:
+            # Too short - might be missing country code, try to add India code
+            if len(clean_number) >= 8:
+                clean_number = '91' + clean_number
+                logger.info(f"   🇮🇳 Adding India country code 91 to short number: {clean_number}")
+            else:
+                logger.warning(f"   ⚠️ Invalid phone number format (too short): {phone_number}")
+        elif len(clean_number) == 10:
             # Exactly 10 digits - assume it's an Indian number and add country code 91
             clean_number = '91' + clean_number
             logger.info(f"   🇮🇳 Adding India country code 91 to 10-digit number: {clean_number}")
-        elif len(clean_number) < 10:
-            # Invalid number - log warning but still try to send
-            logger.warning(f"   ⚠️ Invalid phone number format (too short): {phone_number}")
         elif len(clean_number) > 15:
-            # Too long - might be malformed
+            # Too long - might be malformed, try to fix common issues
             logger.warning(f"   ⚠️ Phone number too long: {phone_number}")
+            # If it starts with country code, keep only first 12 digits (country code + 10 digits)
+            if clean_number.startswith('91') and len(clean_number) > 12:
+                clean_number = clean_number[:12]
+                logger.info(f"   ✂️ Truncated long Indian number: {clean_number}")
+            elif len(clean_number) > 15:
+                # Keep only first 15 digits
+                clean_number = clean_number[:15]
+                logger.info(f"   ✂️ Truncated very long number: {clean_number}")
         
         # GreenAPI expects format: 919876543210@c.us
         formatted_number = f"{clean_number}@c.us"
@@ -356,13 +387,13 @@ Thanks for reaching out to Business Guru. We appreciate your interest in our fin
 
 We encourage you to revisit our services once your business has been operational for a longer period. If you have any other business financing requirements, please let us know. 
 
-Thank you! 🚀📉""",
+Thank you! 🚀.DataGridViewColumn""",
             
             'less_than_5_lakhs': """Hii {wati_name} sir/madam! 🙏
 
 We'd like to inform you about our loan policy regarding application amounts. Business Guru provides collateral loans ranging from 5 Lakhs to 5 Crores. Unfortunately, we're unable to process loan applications for amounts less than 5 Lakhs as they fall outside our current lending framework. We recommend consolidating your requirements or considering our services when your financing needs align with our specified range for better financial solutions.
 
-Thank you for your understanding! 💰📉""",
+Thank you for your understanding! 💰.DataGridViewColumn""",
             
             'first_call_completed': """Hii {wati_name} sir/madam! 📞
 
@@ -457,8 +488,29 @@ Thank you and have a great day! 🌟😊"""
             # Log the activity
             if result['success']:
                 logger.info(f"Sent {message_type} message to {enquiry_data.get('wati_name')} at {mobile_number}")
+                # Add success notification
+                result['notification'] = f"✅ WhatsApp message sent successfully to {enquiry_data.get('wati_name')}"
             else:
                 logger.error(f"Failed to send {message_type} message to {mobile_number}: {result.get('error')}")
+                # Check for quota exceeded error
+                if result.get('status_code') == 466 or result.get('quota_exceeded') or 'quota exceeded' in result.get('error', '').lower() or 'monthly quota' in result.get('error', '').lower():
+                    result['notification'] = f"🚨 GreenAPI monthly quota exceeded! Test number {result.get('working_test_number', '8106811285')} still works. Upgrade at {result.get('upgrade_url', 'https://console.green-api.com')}"
+                    result['quota_exceeded'] = True
+                    result['working_test_number'] = '8106811285'
+                    result['upgrade_url'] = 'https://console.green-api.com'
+            
+            # Add helpful information for quota exceeded cases
+            if result.get('quota_exceeded'):
+                result['quota_info'] = {
+                    'exceeded': True,
+                    'working_test_number': '8106811285',
+                    'upgrade_url': 'https://console.green-api.com',
+                    'solutions': [
+                        'Upgrade to paid GreenAPI plan',
+                        'Wait for monthly quota reset',
+                        'Use test number 8106811285 for testing'
+                    ]
+                }
             
             return result
             

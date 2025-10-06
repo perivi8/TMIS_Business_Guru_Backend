@@ -37,7 +37,7 @@ except Exception as e:
         from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
         
         print("🔄 Creating enhanced fallback client blueprint...")
-        client_bp = Blueprint('client', __name__)
+        client_bp = Blueprint('client_fallback', __name__)
         
         @client_bp.route('/clients', methods=['GET'])
         @jwt_required()
@@ -143,7 +143,7 @@ except Exception as e:
         from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
         
         print("🔄 Creating enhanced fallback enquiry blueprint...")
-        enquiry_bp = Blueprint('enquiry', __name__)
+        enquiry_bp = Blueprint('enquiry_fallback', __name__)
         
         @enquiry_bp.route('/enquiries', methods=['GET'])
         @jwt_required()
@@ -225,215 +225,22 @@ except Exception as e:
         print(f"❌ Failed to create fallback enquiry blueprint: {fallback_error}")
         enquiry_bp = None
 
-# Register blueprints with URL prefixes - ALWAYS try to register something
+# Check blueprint registration status (blueprints are registered in app.py)
 if client_bp:
-    try:
-        app.register_blueprint(client_bp, url_prefix='/api')
-        print("✅ client_bp registered with /api prefix")
-    except Exception as e:
-        print(f"❌ Failed to register client_bp: {e}")
-        print(f"Traceback: {traceback.format_exc()}")
+    if 'client' in app.blueprints:
+        print("✅ client_bp already registered in app.py")
+    else:
+        print("ℹ️ client_bp imported but not registered - this shouldn't happen")
 else:
-    print("❌ client_bp not available - creating emergency fallback")
-    # Create emergency fallback route directly on app with JWT authentication
-    from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
-    
-    @app.route('/api/clients', methods=['GET'])
-    @jwt_required()
-    def emergency_clients():
-        try:
-            print("=== EMERGENCY FALLBACK ROUTE ACCESSED ===")
-            
-            # Get JWT claims for debugging
-            claims = get_jwt()
-            current_user_id = get_jwt_identity()
-            user_role = claims.get('role', 'user')
-            user_email = claims.get('email', current_user_id)
-            
-            print(f"Emergency route - User ID: {current_user_id}")
-            print(f"Emergency route - User Role: {user_role}")
-            print(f"Emergency route - User Email: {user_email}")
-            
-            # Try to import and use the database connection from app.py
-            from app import db, clients_collection
-            
-            if db is None or clients_collection is None:
-                return jsonify({
-                    'error': 'Database connection not available',
-                    'clients': [],
-                    'emergency_fallback': True,
-                    'message': 'MongoDB connection failed - check environment variables',
-                    'debug_info': {
-                        'user_id': current_user_id,
-                        'user_role': user_role,
-                        'db_status': 'disconnected'
-                    }
-                }), 500
-            
-            # Test database connection
-            try:
-                db.command("ping")
-                print("Emergency route - Database connection successful")
-            except Exception as db_error:
-                print(f"Emergency route - Database connection failed: {str(db_error)}")
-                return jsonify({
-                    'error': 'Database connection failed',
-                    'clients': [],
-                    'emergency_fallback': True,
-                    'message': f'Database ping failed: {str(db_error)}'
-                }), 500
-            
-            # Try to get clients from database
-            try:
-                if user_role == 'admin':
-                    # Admin can see all clients
-                    clients_cursor = clients_collection.find()
-                    print("Emergency route - Admin user, fetching all clients")
-                else:
-                    # Regular users see only their clients
-                    clients_cursor = clients_collection.find({'created_by': current_user_id})
-                    print(f"Emergency route - Regular user, fetching clients for: {current_user_id}")
-                
-                clients_list = []
-                for client in clients_cursor:
-                    # Convert ObjectId to string
-                    client['_id'] = str(client['_id'])
-                    clients_list.append(client)
-                
-                print(f"Emergency route - Found {len(clients_list)} clients")
-                
-                return jsonify({
-                    'clients': clients_list,
-                    'emergency_fallback': True,
-                    'message': 'Emergency fallback route working - blueprint import failed',
-                    'count': len(clients_list),
-                    'debug_info': {
-                        'user_id': current_user_id,
-                        'user_role': user_role,
-                        'user_email': user_email
-                    }
-                }), 200
-                
-            except Exception as db_error:
-                print(f"Emergency route - Database query error: {str(db_error)}")
-                return jsonify({
-                    'error': f'Database query failed: {str(db_error)}',
-                    'clients': [],
-                    'emergency_fallback': True,
-                    'message': 'Database connection exists but query failed'
-                }), 500
-                
-        except ImportError:
-            return jsonify({
-                'error': 'Cannot import database connection from app.py',
-                'clients': [],
-                'emergency_fallback': True,
-                'message': 'Complete database connection failure'
-            }), 500
-        except Exception as e:
-            return jsonify({
-                'error': f'Emergency fallback failed: {str(e)}',
-                'clients': [],
-                'emergency_fallback': True,
-                'message': 'Critical system error'
-            }), 500
+    print("❌ client_bp not available - check client_routes.py import")
 
 if enquiry_bp:
-    try:
-        app.register_blueprint(enquiry_bp, url_prefix='/api')
-        print("✅ enquiry_bp registered with /api prefix")
-    except Exception as e:
-        print(f"❌ Failed to register enquiry_bp: {e}")
-        print(f"Traceback: {traceback.format_exc()}")
+    if 'enquiry' in app.blueprints:
+        print("✅ enquiry_bp already registered in app.py")
+    else:
+        print("ℹ️ enquiry_bp imported but not registered - this shouldn't happen")
 else:
-    print("❌ enquiry_bp not available - creating emergency fallback")
-    # Create emergency fallback route directly on app with JWT authentication
-    from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
-    
-    @app.route('/api/enquiries', methods=['GET'])
-    @jwt_required()
-    def emergency_enquiries():
-        try:
-            print("=== EMERGENCY ENQUIRY FALLBACK ROUTE ACCESSED ===")
-            
-            # Get JWT claims for debugging
-            claims = get_jwt()
-            current_user_id = get_jwt_identity()
-            user_role = claims.get('role', 'user')
-            user_email = claims.get('email', current_user_id)
-            
-            print(f"Emergency enquiry route - User ID: {current_user_id}")
-            print(f"Emergency enquiry route - User Role: {user_role}")
-            
-            # Try to import and use the database connection from app.py
-            from app import db
-            
-            if db is None:
-                return jsonify({
-                    'error': 'Database connection not available',
-                    'enquiries': [],
-                    'emergency_fallback': True,
-                    'message': 'MongoDB connection failed - check environment variables'
-                }), 500
-            
-            # Test database connection
-            try:
-                db.command("ping")
-                print("Emergency enquiry route - Database connection successful")
-            except Exception as db_error:
-                print(f"Emergency enquiry route - Database connection failed: {str(db_error)}")
-                return jsonify({
-                    'error': 'Database connection failed',
-                    'enquiries': [],
-                    'emergency_fallback': True,
-                    'message': f'Database ping failed: {str(db_error)}'
-                }), 500
-            
-            # Try to get enquiries from database
-            try:
-                enquiries_collection = db.enquiries
-                
-                if user_role == 'admin':
-                    # Admin can see all enquiries
-                    enquiries_cursor = enquiries_collection.find()
-                    print("Emergency enquiry route - Admin user, fetching all enquiries")
-                else:
-                    # Regular users see only their enquiries
-                    enquiries_cursor = enquiries_collection.find({'created_by': current_user_id})
-                    print(f"Emergency enquiry route - Regular user, fetching enquiries for: {current_user_id}")
-                
-                enquiries_list = []
-                for enquiry in enquiries_cursor:
-                    # Convert ObjectId to string
-                    enquiry['_id'] = str(enquiry['_id'])
-                    enquiries_list.append(enquiry)
-                
-                print(f"Emergency enquiry route - Found {len(enquiries_list)} enquiries")
-                
-                return jsonify({
-                    'enquiries': enquiries_list,
-                    'emergency_fallback': True,
-                    'message': 'Emergency enquiry fallback route working - blueprint import failed',
-                    'count': len(enquiries_list)
-                }), 200
-                
-            except Exception as db_error:
-                print(f"Emergency enquiry route - Database query error: {str(db_error)}")
-                return jsonify({
-                    'error': f'Database query failed: {str(db_error)}',
-                    'enquiries': [],
-                    'emergency_fallback': True,
-                    'message': 'Database connection exists but query failed'
-                }), 500
-                
-        except Exception as e:
-            print(f"Emergency enquiry route - General error: {str(e)}")
-            return jsonify({
-                'error': f'Emergency enquiry fallback failed: {str(e)}',
-                'enquiries': [],
-                'emergency_fallback': True,
-                'message': 'Critical system error'
-            }), 500
+    print("❌ enquiry_bp not available - check enquiry_routes.py import")
 
 print(f"📋 Total registered blueprints: {len(app.blueprints)}")
 print(f"📋 Blueprint names: {list(app.blueprints.keys())}")
@@ -459,26 +266,8 @@ for endpoint in critical_endpoints:
     status = "✅" if found else "❌"
     print(f"{status} Critical endpoint {endpoint}: {'FOUND' if found else 'MISSING'}")
 
-# Note: test-routes endpoint is defined in app.py to avoid conflicts
-
-# Add a simple clients test endpoint that doesn't require JWT
-@app.route('/api/clients/test', methods=['GET'])
-def test_clients_endpoint():
-    """Test clients endpoint without authentication"""
-    try:
-        return jsonify({
-            'status': 'success',
-            'message': 'Clients test endpoint is working',
-            'endpoint': '/api/clients/test',
-            'timestamp': datetime.utcnow().isoformat(),
-            'note': 'This confirms the /api/clients route structure is accessible'
-        }), 200
-    except Exception as e:
-        return jsonify({
-            'status': 'error',
-            'message': f'Clients test endpoint failed: {str(e)}',
-            'timestamp': datetime.utcnow().isoformat()
-        }), 500
+# Note: All routes are now properly handled by blueprints registered in app.py
+# No additional route registration needed here
 
 if __name__ == '__main__':
     # Use environment variables for production deployment
