@@ -67,14 +67,7 @@ if flask_env == 'production':
         "https://tmis-business-guru-frontend-perivihks-projects.vercel.app",
         # Add common Vercel patterns for your username
         "https://tmis-business-guru-perivihk.vercel.app",
-        "https://tmis-business-guru-git-main-perivihk.vercel.app",
-        # Add more comprehensive patterns for Angular deployment
-        "https://tmis-business-guru-frontend-git-main-perivihks-projects.vercel.app",
-        "https://tmis-business-guru-angular.vercel.app",
-        "https://tmis-business-guru-angular-git-main.vercel.app",
-        "https://tmis-business-guru-angular-perivihks-projects.vercel.app",
-        # Add wildcard pattern to catch all Vercel deployments
-        "https://*.vercel.app"
+        "https://tmis-business-guru-git-main-perivihk.vercel.app"
     ]
     allowed_origins.extend(vercel_domains)
     print(f"🔧 Production mode: Added Vercel domains to CORS")
@@ -84,7 +77,7 @@ print(f"🔧 Flask Environment: {flask_env}")
 
 # Configure CORS with specific origins only (no wildcards with credentials)
 cors.init_app(app, 
-    origins=allowed_origins,  # Always use specific origins
+    origins=allowed_origins,
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "Cache-Control"],
     supports_credentials=True,
@@ -93,16 +86,25 @@ cors.init_app(app,
         "Authorization",
         "Access-Control-Allow-Origin"
     ],
-    send_wildcard=False,  # Cannot use wildcard with credentials
+    send_wildcard=False,
     automatic_options=True,
-    max_age=86400  # Cache preflight for 24 hours
+    max_age=86400
 )
+
 jwt = JWTManager(app)
 
 # Initialize SocketIO with CORS support
 socketio = SocketIO(
     app, 
-    cors_allowed_origins="*",  # Allow all origins for development
+    cors_allowed_origins=allowed_origins,
+    async_mode='threading',
+    logger=False,
+    engineio_logger=False,
+    allow_upgrades=True,
+    ping_timeout=60,
+    ping_interval=25
+)
+
     async_mode='threading',
     logger=False,
     engineio_logger=False,

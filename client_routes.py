@@ -705,6 +705,40 @@ def get_clients():
         traceback.print_exc()
         return jsonify({'error': str(e), 'clients': []}), 500
 
+@client_bp.route('/clients/<client_id>', methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+@jwt_required(optional=True)
+def handle_client_requests(client_id):
+    # Handle preflight OPTIONS request
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        # Add CORS headers
+        origin = request.headers.get('Origin')
+        if origin in [
+            'https://tmis-business-guru.vercel.app',
+            'https://tmis-business-guru-frontend.vercel.app',
+            'http://localhost:4200',
+            'http://localhost:4201'
+        ] or (origin and 'vercel.app' in origin):
+            response.headers.add('Access-Control-Allow-Origin', origin)
+        else:
+            response.headers.add('Access-Control-Allow-Origin', '*')
+        
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin,Cache-Control,Access-Control-Allow-Headers,Access-Control-Request-Method,Access-Control-Request-Headers')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD')
+        response.headers.add('Access-Control-Max-Age', '86400')
+        return response
+    
+    # Handle actual requests
+    if request.method == 'PUT':
+        return update_client(client_id)
+    elif request.method == 'GET':
+        return get_client_details(client_id)
+    elif request.method == 'DELETE':
+        return delete_client(client_id)
+    else:
+        return jsonify({'error': 'Method not allowed'}), 405
+
 @client_bp.route('/clients/<client_id>', methods=['GET'])
 @jwt_required()
 def get_client_details(client_id):
@@ -868,12 +902,14 @@ def update_client(client_id):
         client = clients_collection.find_one({'_id': ObjectId(client_id)})
         
         # Send WhatsApp notification for comment updates
+        whatsapp_result = None
         if comments is not None and WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
             try:
                 whatsapp_result = client_whatsapp_service.send_comment_notification(client, comments)
                 logger.info(f"WhatsApp notification result for comment '{comments}': {whatsapp_result}")
             except Exception as e:
                 logger.error(f"Error sending WhatsApp notification for comment: {str(e)}")
+                whatsapp_result = {'success': False, 'error': str(e)}
         
         # Send comprehensive email notification using email service
         try:
@@ -905,7 +941,24 @@ def update_client(client_id):
         except Exception as e:
             print(f"Error sending email notification: {str(e)}")
         
-        return jsonify({'message': 'Client updated successfully'}), 200
+        # Prepare response with WhatsApp status
+        response_data = {'message': 'Client updated successfully'}
+        
+        # Add WhatsApp result to response if attempted
+        if whatsapp_result is not None:
+            response_data['whatsapp_sent'] = whatsapp_result['success']
+            if not whatsapp_result['success']:
+                # Check for quota exceeded error
+                error_msg = whatsapp_result.get('error', '').lower()
+                if ('quota exceeded' in error_msg or 
+                    'monthly quota has been exceeded' in error_msg or
+                    whatsapp_result.get('status_code') == 466):
+                    response_data['whatsapp_quota_exceeded'] = True
+                    response_data['message'] = 'Client updated successfully, but WhatsApp message not sent due to limit reached'
+                else:
+                    response_data['whatsapp_error'] = whatsapp_result.get('error', 'Unknown error')
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
