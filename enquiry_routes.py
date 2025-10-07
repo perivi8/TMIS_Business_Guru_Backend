@@ -436,6 +436,43 @@ def create_enquiry():
         logger.error(f"Error creating enquiry: {str(e)}", exc_info=True)
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
+@enquiry_bp.route('/public/check-mobile', methods=['POST'])
+def check_mobile_exists():
+    """Check if mobile number already exists in enquiry records (public endpoint)"""
+    # Check if database is available
+    if db is None or enquiries_collection is None:
+        return jsonify({'error': 'Database not available'}), 500
+    
+    try:
+        data = request.get_json()
+        mobile_number = data.get('mobile_number', '').strip()
+        
+        if not mobile_number:
+            return jsonify({'exists': False, 'message': 'No mobile number provided'}), 200
+        
+        # Check if mobile number exists in enquiry records
+        existing_enquiry = enquiries_collection.find_one({
+            '$or': [
+                {'mobile_number': mobile_number},
+                {'secondary_mobile_number': mobile_number}
+            ]
+        })
+        
+        if existing_enquiry:
+            return jsonify({
+                'exists': True,
+                'message': 'This mobile number is already registered with us. Please use a different number or contact support if this is your number.'
+            }), 200
+        else:
+            return jsonify({
+                'exists': False,
+                'message': 'Mobile number is available'
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"Error checking mobile number: {str(e)}")
+        return jsonify({'error': 'Failed to check mobile number'}), 500
+
 @enquiry_bp.route('/public/enquiries', methods=['POST'])
 def create_public_enquiry():
     """Create a new enquiry from public form (no authentication required)"""
@@ -453,15 +490,61 @@ def create_public_enquiry():
             if not data.get(field):
                 return jsonify({'error': f'Missing required field: {field}'}), 400
         
+        # Validate mobile number format
+        mobile_number = str(data.get('mobile_number', '')).strip()
+        if not mobile_number.isdigit() or len(mobile_number) < 10 or len(mobile_number) > 15:
+            return jsonify({'error': 'Mobile number must be 10-15 digits'}), 400
+        
+        # Check for duplicate mobile number
+        existing_enquiry = enquiries_collection.find_one({'mobile_number': mobile_number})
+        if existing_enquiry:
+            return jsonify({'error': 'Mobile number already exists. Please use a different number.'}), 400
+        
+        # Validate secondary mobile number if provided and check for duplicates
+        secondary_mobile = data.get('secondary_mobile_number')
+        if secondary_mobile and str(secondary_mobile).strip():
+            secondary_mobile = str(secondary_mobile).strip()
+            if not secondary_mobile.isdigit() or len(secondary_mobile) < 10 or len(secondary_mobile) > 15:
+                return jsonify({'error': 'Secondary mobile number must be 10-15 digits'}), 400
+            
+            # Check if secondary mobile is same as primary
+            if secondary_mobile == mobile_number:
+                return jsonify({'error': 'Secondary mobile number cannot be same as primary mobile number'}), 400
+            
+            # Check for duplicate secondary mobile number
+            existing_secondary = enquiries_collection.find_one({'mobile_number': secondary_mobile})
+            if existing_secondary:
+                return jsonify({'error': 'Secondary mobile number already exists. Please use a different number.'}), 400
+            
+            # Also check if secondary mobile exists as secondary mobile in other records
+            existing_as_secondary = enquiries_collection.find_one({'secondary_mobile_number': secondary_mobile})
+            if existing_as_secondary:
+                return jsonify({'error': 'Secondary mobile number already exists. Please use a different number.'}), 400
+        else:
+            secondary_mobile = None
+        
+        # Handle GST and GST status properly
+        gst_value = str(data.get('gst', '')).strip()
+        gst_status_value = ''
+        
+        # Only save GST status if GST is selected (Yes or No)
+        if gst_value in ['Yes', 'No']:
+            if gst_value == 'Yes':
+                gst_status_value = str(data.get('gst_status', '')).strip()
+                if not gst_status_value:
+                    return jsonify({'error': 'GST status is required when GST is Yes'}), 400
+        else:
+            gst_value = ''  # Set to empty if not selected
+        
         # Create enquiry document
         enquiry = {
             'wati_name': data['wati_name'],
-            'mobile_number': data['mobile_number'],
-            'secondary_mobile_number': data.get('secondary_mobile_number'),
+            'mobile_number': mobile_number,
+            'secondary_mobile_number': secondary_mobile,
             'business_type': data.get('business_type', ''),
             'business_nature': data.get('business_nature', ''),
-            'gst': data.get('gst', ''),
-            'gst_status': data.get('gst_status', ''),
+            'gst': gst_value,
+            'gst_status': gst_status_value,
             'staff': data.get('staff', ''),
             'comments': data.get('comments', 'Public enquiry submission'),
             'additional_comments': data.get('additional_comments', ''),
@@ -474,17 +557,53 @@ def create_public_enquiry():
         # Insert into database
         result = enquiries_collection.insert_one(enquiry)
         
+        # Retrieve the created enquiry for WhatsApp
+        created_enquiry = enquiries_collection.find_one({'_id': result.inserted_id})
+        
         # Prepare response
         enquiry['_id'] = str(result.inserted_id)
         enquiry['created_at'] = enquiry['created_at'].isoformat()
         enquiry['updated_at'] = enquiry['updated_at'].isoformat()
+        
+        # Send WhatsApp welcome message for public enquiry
+        whatsapp_result = {'success': False, 'error': 'WhatsApp service not available'}
+        try:
+            if whatsapp_service is not None:
+                logger.info(f"Attempting to send WhatsApp welcome message to {mobile_number} for public enquiry")
+                
+                # Send public enquiry welcome message
+                whatsapp_result = whatsapp_service.send_enquiry_message(
+                    created_enquiry, 
+                    message_type='public_welcome'
+                )
+                
+                if whatsapp_result['success']:
+                    logger.info(f"WhatsApp welcome message sent successfully to {mobile_number}")
+                    enquiry['whatsapp_sent'] = True
+                    enquiry['whatsapp_message_id'] = whatsapp_result.get('message_id')
+                    enquiry['whatsapp_notification'] = 'Welcome message sent via WhatsApp'
+                else:
+                    error_msg = whatsapp_result.get('error', 'Unknown error')
+                    logger.warning(f"Failed to send WhatsApp message: {error_msg}")
+                    enquiry['whatsapp_sent'] = False
+                    enquiry['whatsapp_error'] = error_msg
+            else:
+                logger.warning("WhatsApp service is not initialized for public enquiry")
+                enquiry['whatsapp_sent'] = False
+                enquiry['whatsapp_error'] = "WhatsApp service not available"
+                
+        except Exception as whatsapp_error:
+            logger.error(f"WhatsApp service error for public enquiry: {str(whatsapp_error)}")
+            enquiry['whatsapp_sent'] = False
+            enquiry['whatsapp_error'] = str(whatsapp_error)
         
         logger.info(f"Successfully created public enquiry {result.inserted_id}")
         return jsonify({
             'success': True,
             'message': 'Enquiry submitted successfully',
             '_id': str(result.inserted_id),
-            'enquiry': enquiry
+            'enquiry': enquiry,
+            'whatsapp_result': whatsapp_result
         }), 201
         
     except Exception as e:

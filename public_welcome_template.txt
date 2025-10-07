@@ -1,0 +1,14 @@
+,
+            
+            'public_welcome': """Hii {wati_name} sir/madam! 👋
+
+Welcome to TMIS Business Guru! Thank you for submitting your enquiry through our website. We're delighted to have you with us and appreciate your interest in our collateral loan services.
+
+Our team of financial experts will review your enquiry and contact you within 24 hours to discuss your business financing requirements in detail. We specialize in providing customized loan solutions to help businesses like yours grow and thrive.
+
+In the meantime, please keep your documents ready for a smooth application process. Our representative will guide you through all the necessary steps when they contact you.
+
+Thank you for choosing TMIS Business Guru! We look forward to supporting your business journey. 🙏✨
+
+Best regards,
+TMIS Business Guru Team"""
