@@ -77,10 +77,10 @@ if flask_env == 'production':
         "https://*.vercel.app"
     ]
     allowed_origins.extend(vercel_domains)
-    print(f"🔧 Production mode: Added Vercel domains to CORS")
+    print(f"Production mode: Added Vercel domains to CORS")
 
-print(f"🌐 CORS Allowed Origins: {allowed_origins}")
-print(f"🔧 Flask Environment: {flask_env}")
+print(f"CORS Allowed Origins: {allowed_origins}")
+print(f"Flask Environment: {flask_env}")
 
 # Configure CORS with specific origins only (no wildcards with credentials)
 cors.init_app(app, 
@@ -273,7 +273,7 @@ def after_request_cors_handler(response):
             # Check if Flask-CORS already set the origin
             if not response.headers.get('Access-Control-Allow-Origin'):
                 response.headers['Access-Control-Allow-Origin'] = origin
-                print(f"🔧 Added dynamic CORS origin: {origin}")
+                print(f"Added dynamic CORS origin: {origin}")
             
         return response
     except Exception as e:
@@ -335,12 +335,12 @@ def add_claims_to_jwt(identity):
 # MongoDB connection
 MONGODB_URI = os.getenv('MONGODB_URI')
 if not MONGODB_URI:
-    print("❌ CRITICAL ERROR: MONGODB_URI environment variable not found!")
+    print("CRITICAL ERROR: MONGODB_URI environment variable not found!")
     print("Please set MONGODB_URI in your Render dashboard environment variables")
     print("Required format: mongodb+srv://username:password@cluster.mongodb.net/database_name?retryWrites=true&w=majority")
     raise ValueError("MONGODB_URI environment variable is required for production deployment")
 
-print(f"🔄 Connecting to MongoDB...")
+print(f"Connecting to MongoDB...")
 print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
 
 try:
@@ -348,7 +348,7 @@ try:
     db = client.tmis_business_guru
     # Test connection
     db.command("ping")
-    print("✅ MongoDB connection successful")
+    print("MongoDB connection successful")
     
     # Initialize collections
     users_collection = db.users
@@ -360,18 +360,18 @@ try:
         user_count = users_collection.count_documents({})
         client_count = clients_collection.count_documents({})
         pending_registrations_count = pending_registrations_collection.count_documents({})
-        print(f"📊 Database stats: {user_count} users, {client_count} clients, {pending_registrations_count} pending registrations")
+        print(f"Database stats: {user_count} users, {client_count} clients, {pending_registrations_count} pending registrations")
     except Exception as stats_error:
-        print(f"⚠️ Warning: Could not get collection stats: {stats_error}")
+        print(f"Warning: Could not get collection stats: {stats_error}")
         
 except Exception as e:
-    print(f"❌ MongoDB connection failed: {str(e)}")
-    print("🔍 Troubleshooting:")
+    print(f"MongoDB connection failed: {str(e)}")
+    print("Troubleshooting:")
     print("1. Check if MongoDB URI includes database name")
     print("2. Verify MongoDB Atlas cluster is running")
     print("3. Check network connectivity and IP whitelist")
     print("4. Verify credentials in MongoDB URI")
-    print("🔧 Setting database objects to None - app will use fallback behavior")
+    print("Setting database objects to None - app will use fallback behavior")
     
     # Don't raise exception, just set to None for graceful degradation
     db = None
@@ -395,20 +395,20 @@ def send_email(to_email, subject, body):
         smtp_email = os.getenv('SMTP_EMAIL')
         smtp_password = os.getenv('SMTP_PASSWORD')
         
-        print(f"📧 Attempting to send email to: {to_email}")
-        print(f"📧 SMTP Server: {smtp_server}:{smtp_port}")
-        print(f"📧 From Email: {smtp_email}")
+        print(f"Attempting to send email to: {to_email}")
+        print(f"SMTP Server: {smtp_server}:{smtp_port}")
+        print(f"From Email: {smtp_email}")
         
         # Check if all required SMTP configuration is available
         if not all([smtp_server, smtp_port, smtp_email, smtp_password]):
-            print("❌ Missing SMTP configuration")
+            print("Missing SMTP configuration")
             return False
         
         # Convert port to integer
         try:
             smtp_port = int(smtp_port)
         except (ValueError, TypeError):
-            print("❌ Invalid SMTP port")
+            print("Invalid SMTP port")
             return False
         
         msg = email.mime.multipart.MIMEMultipart()
@@ -418,33 +418,33 @@ def send_email(to_email, subject, body):
         
         msg.attach(email.mime.text.MIMEText(body, 'html'))
         
-        print(f"📧 Connecting to SMTP server...")
+        print(f"Connecting to SMTP server...")
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
         
-        print(f"📧 Logging in...")
+        print(f"Logging in...")
         server.login(smtp_email, smtp_password)
         
-        print(f"📧 Sending email...")
+        print(f"Sending email...")
         text = msg.as_string()
         server.sendmail(smtp_email, to_email, text)
         server.quit()
         
-        print(f"✅ Email sent successfully to {to_email}")
+        print(f"Email sent successfully to {to_email}")
         return True
         
     except smtplib.SMTPAuthenticationError as e:
-        print(f"❌ SMTP Authentication failed: {str(e)}")
-        print("💡 Check your email and app password in .env file")
+        print(f"SMTP Authentication failed: {str(e)}")
+        print("Check your email and app password in .env file")
         return False
     except smtplib.SMTPRecipientsRefused as e:
-        print(f"❌ Recipient email refused: {str(e)}")
+        print(f"Recipient email refused: {str(e)}")
         return False
     except smtplib.SMTPException as e:
-        print(f"❌ SMTP error: {str(e)}")
+        print(f"SMTP error: {str(e)}")
         return False
     except Exception as e:
-        print(f"❌ Email sending failed: {str(e)}")
+        print(f"Email sending failed: {str(e)}")
         return False
 
 @app.route('/api/register', methods=['POST'])
@@ -482,7 +482,7 @@ def register():
             if existing_pending:
                 # Delete the old pending registration to allow re-registration
                 pending_registrations_collection.delete_one({'email': email})
-                print(f"🔄 Removed old pending registration for {email}")
+                print(f" Removed old pending registration for {email}")
         
         # Hash password
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
@@ -668,7 +668,7 @@ def check_deleted_users():
             deleted_users_cache = getattr(app, 'deleted_users_cache', set())
             
             if user_id in deleted_users_cache or user_email in deleted_users_cache:
-                print(f"🚫 Blocking request from deleted user: {user_email}")
+                print(f"BLOCKED: Blocking request from deleted user: {user_email}")
                 return jsonify({
                     'error': 'user_deleted',
                     'message': 'Your account has been deleted. Please contact admin.',
@@ -1085,7 +1085,7 @@ def get_pending_users():
 def approve_user(user_id):
     """Approve a pending user registration - Admin only"""
     try:
-        print(f"🔍 Approve user request for ID: {user_id}")
+        print(f"DEBUG: Approve user request for ID: {user_id}")
         
         # Check if user is admin
         claims = get_jwt()
@@ -1101,18 +1101,18 @@ def approve_user(user_id):
         try:
             obj_id = ObjectId(user_id)
         except Exception as e:
-            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            print(f"ERROR: Invalid ObjectId format: {user_id}, error: {e}")
             return jsonify({'error': 'Invalid user ID format'}), 400
         
-        print(f"🔍 Looking for user with ObjectId: {obj_id}")
+        print(f"DEBUG: Looking for user with ObjectId: {obj_id}")
         
         # Find the pending registration
         pending_registration = pending_registrations_collection.find_one({'_id': obj_id})
         if not pending_registration:
-            print(f"❌ No pending registration found with ID: {user_id}")
+            print(f"ERROR: No pending registration found with ID: {user_id}")
             return jsonify({'error': 'Pending registration not found'}), 404
         
-        print(f"✅ Found pending registration: {pending_registration.get('username')} ({pending_registration.get('email')})")
+        print(f"SUCCESS: Found pending registration: {pending_registration.get('username')} ({pending_registration.get('email')})")
         
         # Get admin info
         admin_user = users_collection.find_one({'_id': ObjectId(current_user_id)})
@@ -1188,7 +1188,7 @@ def delete_user(user_id):
         try:
             obj_id = ObjectId(user_id)
         except Exception as e:
-            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            print(f"ERROR: Invalid ObjectId format: {user_id}, error: {e}")
             return jsonify({'error': 'Invalid user ID format'}), 400
         
         # Prevent admin from deleting themselves
@@ -1198,14 +1198,14 @@ def delete_user(user_id):
         # Find the user to delete
         user_to_delete = users_collection.find_one({'_id': obj_id})
         if not user_to_delete:
-            print(f"❌ No user found with ID: {user_id}")
+            print(f"ERROR: No user found with ID: {user_id}")
             return jsonify({'error': 'User not found'}), 404
         
         # Prevent deleting other admins (optional security measure)
         if user_to_delete.get('role') == 'admin':
             return jsonify({'error': 'Cannot delete admin users'}), 403
         
-        print(f"✅ Found user to delete: {user_to_delete.get('username')} ({user_to_delete.get('email')})")
+        print(f"SUCCESS: Found user to delete: {user_to_delete.get('username')} ({user_to_delete.get('email')})")
         
         # Store user info before deletion for logout
         deleted_user_email = user_to_delete.get('email')
@@ -1217,7 +1217,7 @@ def delete_user(user_id):
         if result.deleted_count == 0:
             return jsonify({'error': 'Failed to delete user'}), 500
         
-        print(f"✅ Successfully deleted user: {user_to_delete.get('username')}")
+        print(f"SUCCESS: Successfully deleted user: {user_to_delete.get('username')}")
         
         # Add the deleted user to a blacklist for immediate logout
         # This will be checked by the auth middleware
@@ -1226,7 +1226,7 @@ def delete_user(user_id):
         deleted_users_cache.add(deleted_user_email)
         app.deleted_users_cache = deleted_users_cache
         
-        print(f"🚫 Added user to logout blacklist: {deleted_user_email}")
+        print(f"BLOCKED: Added user to logout blacklist: {deleted_user_email}")
         
         # Schedule cleanup of the blacklist after 1 hour to prevent memory leaks
         import threading
@@ -1277,16 +1277,16 @@ def reject_user(user_id):
         try:
             obj_id = ObjectId(user_id)
         except Exception as e:
-            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            print(f"ERROR: Invalid ObjectId format: {user_id}, error: {e}")
             return jsonify({'error': 'Invalid user ID format'}), 400
         
         # Find the pending registration
         pending_registration = pending_registrations_collection.find_one({'_id': obj_id})
         if not pending_registration:
-            print(f"❌ No pending registration found with ID: {user_id}")
+            print(f"ERROR: No pending registration found with ID: {user_id}")
             return jsonify({'error': 'Pending registration not found'}), 404
         
-        print(f"✅ Found pending registration: {pending_registration.get('username')} ({pending_registration.get('email')})")
+        print(f"SUCCESS: Found pending registration: {pending_registration.get('username')} ({pending_registration.get('email')})")
         
         # Get admin info
         admin_user = users_collection.find_one({'_id': ObjectId(current_user_id)})
@@ -1298,7 +1298,7 @@ def reject_user(user_id):
         if result.deleted_count == 0:
             return jsonify({'error': 'Failed to reject user'}), 500
         
-        print(f"✅ Successfully rejected registration: {pending_registration.get('username')}")
+        print(f"SUCCESS: Successfully rejected registration: {pending_registration.get('username')}")
         
         # Send rejection email to user
         try:
@@ -1342,15 +1342,15 @@ def forgot_password():
         if db is None:
             return jsonify({'error': 'Database connection failed'}), 500
         
-        print(f"🔍 Looking for user with email: {email}")
+        print(f"DEBUG: Looking for user with email: {email}")
         
         # First check if user exists at all
         user_any_status = users_collection.find_one({'email': email})
-        print(f"🔍 User found (any status): {user_any_status is not None}")
+        print(f"DEBUG: User found (any status): {user_any_status is not None}")
         
         if user_any_status:
-            print(f"🔍 User status: {user_any_status.get('status', 'No status field')}")
-            print(f"🔍 User details: {user_any_status.get('username', 'No username')}")
+            print(f"DEBUG: User status: {user_any_status.get('status', 'No status field')}")
+            print(f"DEBUG: User details: {user_any_status.get('username', 'No username')}")
         
         # Find user - check both active users and users without status (legacy users)
         user = users_collection.find_one({
@@ -1362,11 +1362,11 @@ def forgot_password():
         })
         
         if not user:
-            print(f"❌ No active user found for email: {email}")
+            print(f"ERROR: No active user found for email: {email}")
             # Return error for non-existent users (as requested)
             return jsonify({'error': 'Email not found. Only registered users can reset their password.'}), 404
         
-        print(f"✅ Found user: {user.get('username')} with status: {user.get('status', 'legacy')}")
+        print(f"SUCCESS: Found user: {user.get('username')} with status: {user.get('status', 'legacy')}")
         
         # Generate 6-digit reset code
         import random
@@ -1408,7 +1408,7 @@ def forgot_password():
                 print(f"Email sending failed for {email}")
                 return jsonify({'error': 'Failed to send reset code. Please check your email address.'}), 500
                 
-            print(f"✅ Email sent successfully to {email}")
+            print(f"SUCCESS: Email sent successfully to {email}")
             
             # Return success response
             return jsonify({
@@ -1637,12 +1637,12 @@ def reset_password():
 
 # Import and register client routes
 try:
-    print("🔄 Importing client routes...")
+    print(" Importing client routes...")
     from client_routes import client_bp
     app.register_blueprint(client_bp, url_prefix='/api')
-    print("✅ Client routes registered successfully")
+    print("SUCCESS: Client routes registered successfully")
 except Exception as e:
-    print(f"❌ Error importing client routes: {e}")
+    print(f"ERROR: Error importing client routes: {e}")
     
     # Create a simple fallback client endpoint
     @app.route('/api/clients', methods=['GET'])
@@ -1726,21 +1726,21 @@ except Exception as e:
 
 # Import and register enquiry routes
 try:
-    print("🔄 Importing enquiry routes...")
+    print(" Importing enquiry routes...")
     from enquiry_routes import enquiry_bp
     app.register_blueprint(enquiry_bp, url_prefix='/api')
-    print("✅ Enquiry routes registered successfully")
+    print("SUCCESS: Enquiry routes registered successfully")
 except Exception as e:
-    print(f"❌ Error importing enquiry routes: {e}")
+    print(f"ERROR: Error importing enquiry routes: {e}")
 
 # Register Chatbot Routes
 try:
-    print("🔄 Importing chatbot routes...")
+    print(" Importing chatbot routes...")
     from chatbot_routes import chatbot_bp
     app.register_blueprint(chatbot_bp)
-    print("✅ Chatbot routes registered successfully")
+    print("SUCCESS: Chatbot routes registered successfully")
 except Exception as e:
-    print(f"❌ Error importing chatbot routes: {e}")
+    print(f"ERROR: Error importing chatbot routes: {e}")
     
     # Create a simple fallback enquiry endpoint
     @app.route('/api/enquiries', methods=['GET'])
@@ -1820,9 +1820,9 @@ except Exception as e:
 try:
     from socketio_handlers import init_socketio_handlers
     init_socketio_handlers(socketio, users_collection)
-    print("✅ SocketIO handlers initialized successfully")
+    print("SUCCESS: SocketIO handlers initialized successfully")
 except Exception as e:
-    print(f"❌ Error initializing SocketIO handlers: {e}")
+    print(f"ERROR: Error initializing SocketIO handlers: {e}")
 
 # Add real-time registration endpoint
 @app.route('/api/register-realtime', methods=['POST'])
@@ -1897,7 +1897,7 @@ def test_greenapi_endpoint():
             }), 500
         
         # Test message
-        test_message = f"🧪 TMIS GreenAPI Test\n\nHello! This is a test message from TMIS Business Guru.\n\n✅ No OTP required\n🚀 Sent via GreenAPI\n\nTime: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
+        test_message = f"TEST: TMIS GreenAPI Test\n\nHello! This is a test message from TMIS Business Guru.\n\nSUCCESS: No OTP required\nROCKET: Sent via GreenAPI\n\nTime: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
         
         result = whatsapp_service.send_message(mobile_number, test_message)
         
@@ -1928,7 +1928,7 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_ENV', 'development') == 'development'
     
-    print(f"🚀 Starting TMIS Business Guru Backend with SocketIO...")
+    print(f"ROCKET: Starting TMIS Business Guru Backend with SocketIO...")
     print(f"Port: {port}")
     print(f"Debug: {debug}")
     print(f"Environment: {os.environ.get('FLASK_ENV', 'development')}")

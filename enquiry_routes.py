@@ -436,6 +436,61 @@ def create_enquiry():
         logger.error(f"Error creating enquiry: {str(e)}", exc_info=True)
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
+@enquiry_bp.route('/public/enquiries', methods=['POST'])
+def create_public_enquiry():
+    """Create a new enquiry from public form (no authentication required)"""
+    # Check if database is available
+    if db is None or enquiries_collection is None:
+        return jsonify({'error': 'Database not available'}), 500
+    
+    try:
+        data = request.get_json()
+        logger.info(f"Received public enquiry data: {data}")
+        
+        # Validate required fields
+        required_fields = ['wati_name', 'mobile_number']
+        for field in required_fields:
+            if not data.get(field):
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Create enquiry document
+        enquiry = {
+            'wati_name': data['wati_name'],
+            'mobile_number': data['mobile_number'],
+            'secondary_mobile_number': data.get('secondary_mobile_number'),
+            'business_type': data.get('business_type', ''),
+            'business_nature': data.get('business_nature', ''),
+            'gst': data.get('gst', ''),
+            'gst_status': data.get('gst_status', ''),
+            'staff': data.get('staff', ''),
+            'comments': data.get('comments', 'Public enquiry submission'),
+            'additional_comments': data.get('additional_comments', ''),
+            'status': 'Active',  # Default status for public enquiries
+            'source': 'Public Form',  # Mark as public enquiry
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        # Insert into database
+        result = enquiries_collection.insert_one(enquiry)
+        
+        # Prepare response
+        enquiry['_id'] = str(result.inserted_id)
+        enquiry['created_at'] = enquiry['created_at'].isoformat()
+        enquiry['updated_at'] = enquiry['updated_at'].isoformat()
+        
+        logger.info(f"Successfully created public enquiry {result.inserted_id}")
+        return jsonify({
+            'success': True,
+            'message': 'Enquiry submitted successfully',
+            '_id': str(result.inserted_id),
+            'enquiry': enquiry
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating public enquiry: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Failed to submit enquiry: {str(e)}'}), 500
+
 @enquiry_bp.route('/enquiries/<enquiry_id>', methods=['PUT'])
 @jwt_required()
 def update_enquiry(enquiry_id):
