@@ -86,13 +86,13 @@ class DocumentProcessor:
             Analyze the following GST document text and extract the required information. 
             Return the data in JSON format with the following fields:
             - registration_number: GST registration number (15 characters)
-            - legal_name: Legal name of the business
-            - trade_name: Trade name or business name
-            - address: Complete business address
-            - state: State name
-            - district: District name
-            - pincode: 6-digit pincode
-            - gst_status: GST registration status (Active, Inactive, Cancelled, etc.)
+            - legal_name: Legal name of business (from "Legal Name of Business" field)
+            - trade_name: Trade name or business name (from "Trade Name" field)
+            - address: Complete business address (specifically from "Principal Place of Business" field)
+            - state: State name (from "State Name" field)
+            - district: District name (from "District" field)
+            - pincode: 6-digit pincode (from "Pin Code" field)
+            - gst_status: GST registration status (Active, Inactive, Cancelled, etc.) (from "Status" field)
             - business_type: Type of business (Proprietorship, Partnership, Private Limited, etc.)
             
             Document text:
@@ -136,42 +136,48 @@ class DocumentProcessor:
         """Extract GST information using regex patterns (fallback method)"""
         try:
             # Extract GST number (registration number)
-            gst_number_pattern = r'GSTIN[:\s]*([0-9A-Z]{15})'
+            gst_number_pattern = r'GSTIN\s*[:\-]?\s*([0-9A-Z]{15})'
             gst_number_match = re.search(gst_number_pattern, text, re.IGNORECASE)
             gst_number = gst_number_match.group(1).strip() if gst_number_match else ""
             
-            # Extract legal name
-            legal_name_pattern = r'Legal Name of Business[:\s]*([A-Za-z\s&.,]+)'
+            # Extract legal name - more flexible pattern
+            legal_name_pattern = r'Legal Name of Business\s*[:\-]?\s*([^\n\r]+)'
             legal_name_match = re.search(legal_name_pattern, text, re.IGNORECASE)
             legal_name = legal_name_match.group(1).strip() if legal_name_match else ""
             
-            # Extract trade name (business name)
-            trade_name_pattern = r'Trade Name[:\s]*([A-Za-z\s&.,]+)'
+            # Extract trade name (business name) - more flexible pattern
+            trade_name_pattern = r'Trade Name\s*[:\-]?\s*([^\n\r]+)'
             trade_name_match = re.search(trade_name_pattern, text, re.IGNORECASE)
             trade_name = trade_name_match.group(1).strip() if trade_name_match else ""
             
-            # Extract address
-            address_pattern = r'Principal Place of Business[:\s]*([A-Za-z0-9\s,.\-/]+?)(?:\n|$)'
+            # Extract address - specifically look for "Principal Place of Business"
+            address_pattern = r'Principal Place of Business\s*[:\-]?\s*([^\n\r]+)'
             address_match = re.search(address_pattern, text, re.IGNORECASE)
             address = address_match.group(1).strip() if address_match else ""
             
+            # If Principal Place of Business not found, try general address pattern
+            if not address:
+                address_pattern = r'Address\s*[:\-]?\s*([^\n\r]+)'
+                address_match = re.search(address_pattern, text, re.IGNORECASE)
+                address = address_match.group(1).strip() if address_match else ""
+            
             # Extract state
-            state_pattern = r'State Name[:\s]*([A-Za-z\s]+)'
+            state_pattern = r'State Name\s*[:\-]?\s*([^\n\r]+)'
             state_match = re.search(state_pattern, text, re.IGNORECASE)
             state = state_match.group(1).strip() if state_match else ""
             
             # Extract district
-            district_pattern = r'District[:\s]*([A-Za-z\s]+)'
+            district_pattern = r'District\s*[:\-]?\s*([^\n\r]+)'
             district_match = re.search(district_pattern, text, re.IGNORECASE)
             district = district_match.group(1).strip() if district_match else ""
             
             # Extract pincode
-            pincode_pattern = r'Pin Code[:\s]*([0-9]{6})'
+            pincode_pattern = r'Pin Code\s*[:\-]?\s*(\d{6})'
             pincode_match = re.search(pincode_pattern, text, re.IGNORECASE)
             pincode = pincode_match.group(1).strip() if pincode_match else ""
             
             # Extract GST status
-            gst_status_pattern = r'Status[:\s]*([A-Za-z\s]+)'
+            gst_status_pattern = r'Status\s*[:\-]?\s*([^\n\r]+)'
             gst_status_match = re.search(gst_status_pattern, text, re.IGNORECASE)
             gst_status = gst_status_match.group(1).strip() if gst_status_match else ""
             
