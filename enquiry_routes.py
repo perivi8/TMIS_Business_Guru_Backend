@@ -314,7 +314,10 @@ def create_enquiry():
         staff = str(data.get('staff', '')).strip()
         comments = str(data.get('comments', '')).strip()
         
-        logger.info(f"Wati name: '{wati_name}', Staff: '{staff}', Comments: '{comments}'")
+        # Get legal name if provided
+        legal_name = str(data.get('legal_name', '')).strip() if data.get('legal_name') else ''
+        
+        logger.info(f"Wati name: '{wati_name}', Staff: '{staff}', Comments: '{comments}', Legal Name: '{legal_name}'")
         
         if not wati_name:
             return jsonify({'error': 'Wati name is required'}), 400
@@ -333,6 +336,7 @@ def create_enquiry():
         
         enquiry_data = {
             'wati_name': data.get('wati_name'),
+            'legal_name': legal_name,  # Add legal name field
             'user_name': data.get('user_name'),
             'mobile_number': mobile_number,
             'secondary_mobile_number': secondary_mobile,  # Use the validated variable
@@ -568,7 +572,7 @@ def create_public_enquiry():
         # Send WhatsApp welcome message for public enquiry
         whatsapp_result = {'success': False, 'error': 'WhatsApp service not available'}
         try:
-            if whatsapp_service is not None:
+            if whatsapp_service is not None and created_enquiry is not None:
                 logger.info(f"Attempting to send WhatsApp welcome message to {mobile_number} for public enquiry")
                 
                 # Send public enquiry welcome message
@@ -610,6 +614,76 @@ def create_public_enquiry():
         logger.error(f"Error creating public enquiry: {str(e)}", exc_info=True)
         return jsonify({'error': f'Failed to submit enquiry: {str(e)}'}), 500
 
+def send_staff_assignment_messages(enquiry_data, staff_name):
+    """Send three automated WhatsApp messages when staff is assigned to an enquiry"""
+    try:
+        if whatsapp_service is None:
+            logger.error("WhatsApp service is not initialized")
+            return {
+                'success': False,
+                'error': "WhatsApp service not available - Check GreenAPI configuration"
+            }
+        
+        mobile_number = enquiry_data.get('mobile_number')
+        if not mobile_number:
+            return {
+                'success': False,
+                'error': 'No mobile number provided'
+            }
+        
+        customer_name = enquiry_data.get('wati_name', 'Sir/Madam')
+        
+        # Message 1: Staff introduction
+        message1 = f"""Hi {customer_name}
+
+This is {staff_name}
+
+How can I help you
+
+We provide collateral free loan for all kinds of businesses based on transactions
+
+Loan from 5 lacs to 5 crores - GST is must
+
+Working Hours : 10.00AM - 6.00PM"""
+        
+        # Send first message
+        result1 = whatsapp_service.send_message(mobile_number, message1)
+        if not result1['success']:
+            logger.error(f"Failed to send first staff assignment message: {result1.get('error')}")
+            return result1
+        
+        # Message 2: Business information request
+        message2 = "Could you please tell us about your business and its nature"
+        
+        # Send second message
+        result2 = whatsapp_service.send_message(mobile_number, message2)
+        if not result2['success']:
+            logger.error(f"Failed to send second staff assignment message: {result2.get('error')}")
+            return result2
+        
+        # Message 3: Loan amount request
+        message3 = "What is the loan amount you require?"
+        
+        # Send third message
+        result3 = whatsapp_service.send_message(mobile_number, message3)
+        if not result3['success']:
+            logger.error(f"Failed to send third staff assignment message: {result3.get('error')}")
+            return result3
+        
+        logger.info(f"Successfully sent all staff assignment messages to {mobile_number}")
+        return {
+            'success': True,
+            'message': 'All staff assignment messages sent successfully',
+            'results': [result1, result2, result3]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error sending staff assignment messages: {str(e)}")
+        return {
+            'success': False,
+            'error': f'Error sending staff assignment messages: {str(e)}'
+        }
+
 @enquiry_bp.route('/enquiries/<enquiry_id>', methods=['PUT'])
 @jwt_required()
 def update_enquiry(enquiry_id):
@@ -635,6 +709,14 @@ def update_enquiry(enquiry_id):
         existing_enquiry = enquiries_collection.find_one({'_id': ObjectId(enquiry_id)})
         if not existing_enquiry:
             return jsonify({'error': 'Enquiry not found'}), 404
+        
+        # Check if trying to change staff after it's been assigned
+        existing_staff = existing_enquiry.get('staff', '')
+        if 'staff' in data and existing_staff and existing_staff.strip():
+            # Staff is already assigned, check if trying to change it
+            new_staff = data['staff']
+            if new_staff != existing_staff:
+                return jsonify({'error': 'Staff is already assigned and cannot be changed'}), 400
         
         # Validate mobile numbers if provided (accept 10-15 digits with country code)
         if 'mobile_number' in data:
@@ -670,7 +752,7 @@ def update_enquiry(enquiry_id):
         
         # Add fields to update
         updatable_fields = [
-            'date', 'wati_name', 'user_name', 'mobile_number', 
+            'date', 'wati_name', 'legal_name', 'user_name', 'mobile_number', 
             'secondary_mobile_number', 'gst', 'gst_status', 
             'business_type', 'business_nature', 'staff', 'comments', 'additional_comments'
         ]
@@ -690,6 +772,23 @@ def update_enquiry(enquiry_id):
                 else:
                     update_doc[field] = data[field]
         
+        # Check if staff is being assigned (changed from empty to a value)
+        staff_assignment_notification = None
+        if ('staff' in data and data['staff'] and 
+            (not existing_staff or not existing_staff.strip())):
+            # Staff is being assigned for the first time
+            staff_name = data['staff']
+            logger.info(f"Staff {staff_name} is being assigned to enquiry {enquiry_id}")
+            
+            # Send the three automated WhatsApp messages
+            whatsapp_result = send_staff_assignment_messages(existing_enquiry, staff_name)
+            if whatsapp_result['success']:
+                staff_assignment_notification = "Staff assignment messages sent successfully"
+                logger.info(f"Staff assignment messages sent to {existing_enquiry.get('mobile_number')}")
+            else:
+                staff_assignment_notification = f"Failed to send staff assignment messages: {whatsapp_result.get('error')}"
+                logger.error(f"Failed to send staff assignment messages: {whatsapp_result.get('error')}")
+        
         # Update enquiry
         result = enquiries_collection.update_one(
             {'_id': ObjectId(enquiry_id)},
@@ -702,6 +801,10 @@ def update_enquiry(enquiry_id):
         # Retrieve updated enquiry
         updated_enquiry = enquiries_collection.find_one({'_id': ObjectId(enquiry_id)})
         serialized_enquiry = serialize_enquiry(updated_enquiry)
+        
+        # Add staff assignment notification if applicable
+        if staff_assignment_notification:
+            serialized_enquiry['staff_assignment_notification'] = staff_assignment_notification
         
         # Send WhatsApp message when enquiry is updated (similar to create_enquiry)
         try:

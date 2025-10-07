@@ -441,9 +441,106 @@ We understand that your enquiry might have been submitted by mistake. No issues 
 
 We're always here to support your business financing needs. Feel free to reach out to us anytime for any collateral loan requirements. 
 
-Thank you and have a great day! 🌟😊"""
+Thank you and have a great day! 🌟😊""",
+            
+            'public_welcome': """Hii {wati_name} sir/madam! 👋
+
+Welcome to TMIS Business Guru! Thank you for submitting your enquiry through our website. We're delighted to have you with us and appreciate your interest in our collateral loan services.
+
+Our team of financial experts will review your enquiry and contact you within 24 hours to discuss your business financing requirements in detail. We specialize in providing customized loan solutions to help businesses like yours grow and thrive.
+
+In the meantime, please keep your documents ready for a smooth application process. Our representative will guide you through all the necessary steps when they contact you.
+
+Thank you for choosing TMIS Business Guru! We look forward to supporting your business journey. 🙏✨
+
+Best regards,
+TMIS Business Guru Team"""
         }
     
+    def send_staff_assignment_messages(self, enquiry_data: Dict[str, Any], staff_name: str) -> Dict[str, Any]:
+        """
+        Send 3 sequential messages when staff is assigned
+        
+        Args:
+            enquiry_data (dict): Enquiry information
+            staff_name (str): Name of assigned staff
+            
+        Returns:
+            Dict: Result of message sending
+        """
+        try:
+            templates = self.get_message_templates()
+            mobile_number = enquiry_data.get('mobile_number')
+            
+            if not mobile_number:
+                logger.error("No mobile number provided for staff assignment messages")
+                return {
+                    'success': False,
+                    'error': 'No mobile number provided'
+                }
+            
+            results = []
+            message_types = ['staff_assignment_1', 'staff_assignment_2', 'staff_assignment_3']
+            
+            for i, msg_type in enumerate(message_types, 1):
+                try:
+                    if msg_type not in templates:
+                        logger.error(f"Template {msg_type} not found")
+                        continue
+                    
+                    # Format message
+                    message_template = templates[msg_type]
+                    formatted_message = message_template.format(
+                        staff_name=staff_name,
+                        wati_name=enquiry_data.get('wati_name', 'Customer')
+                    )
+                    
+                    # Send message
+                    result = self.send_message(mobile_number, formatted_message)
+                    results.append({
+                        'message_number': i,
+                        'type': msg_type,
+                        'success': result['success'],
+                        'message_id': result.get('message_id'),
+                        'error': result.get('error')
+                    })
+                    
+                    logger.info(f"Staff assignment message {i}/3 sent to {mobile_number}: {'Success' if result['success'] else 'Failed'}")
+                    
+                    # Add small delay between messages (1 second)
+                    import time
+                    if i < len(message_types):  # Don't delay after last message
+                        time.sleep(1)
+                        
+                except Exception as msg_error:
+                    logger.error(f"Error sending staff assignment message {i}: {str(msg_error)}")
+                    results.append({
+                        'message_number': i,
+                        'type': msg_type,
+                        'success': False,
+                        'error': str(msg_error)
+                    })
+            
+            # Determine overall success
+            successful_messages = sum(1 for r in results if r['success'])
+            total_messages = len(results)
+            
+            return {
+                'success': successful_messages > 0,
+                'total_messages': total_messages,
+                'successful_messages': successful_messages,
+                'failed_messages': total_messages - successful_messages,
+                'results': results,
+                'notification': f"Staff assignment: {successful_messages}/{total_messages} messages sent successfully"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in send_staff_assignment_messages: {str(e)}")
+            return {
+                'success': False,
+                'error': f'Error: {str(e)}'
+            }
+
     def send_enquiry_message(self, enquiry_data: Dict[str, Any], message_type: str = 'new_enquiry') -> Dict[str, Any]:
         """
         Send a message based on enquiry data and type

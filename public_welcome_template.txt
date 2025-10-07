@@ -11,4 +11,20 @@ In the meantime, please keep your documents ready for a smooth application proce
 Thank you for choosing TMIS Business Guru! We look forward to supporting your business journey. 🙏✨
 
 Best regards,
-TMIS Business Guru Team"""
+TMIS Business Guru Team""",
+
+            'staff_assignment_1': """Hi Sir/Madam
+
+This is {staff_name}
+
+How can I help you
+
+We provide collateral free loan for all kinds of businesses based on transactions
+
+Loan from 5 lacs to 5 crores - GST is must 
+
+Working Hours : 10.00AM - 6.00PM""",
+
+            'staff_assignment_2': """Could you please tell us about your business and its nature""",
+
+            'staff_assignment_3': """What is the loan amount you require?"""
