@@ -3,29 +3,172 @@ import re
 from datetime import datetime
 import pandas as pd
 import json
+import os
+from dotenv import load_dotenv
+import google.generativeai as genai
+import logging
+from PIL import Image
+import pytesseract
+
+# Load environment variables
+load_dotenv()
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
     def __init__(self):
-        pass
+        # Initialize Gemini AI
+        self.api_key = os.getenv('GEMINI_API_KEY')
+        if self.api_key:
+            try:
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.use_ai = True
+                logger.info("✅ Gemini AI initialized for document processing")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to initialize Gemini AI: {e}. Falling back to regex extraction.")
+                self.use_ai = False
+        else:
+            logger.warning("⚠️ GEMINI_API_KEY not found. Using regex extraction.")
+            self.use_ai = False
     
-    def extract_gst_info(self, pdf_path):
-        """Extract information from GST document"""
+    def extract_gst_info(self, file_path):
+        """Extract information from GST document (PDF or image) using AI or fallback to regex"""
         try:
-            with open(pdf_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                text = ""
-                for page in pdf_reader.pages:
-                    text += page.extract_text()
+            text = self._extract_text_from_file(file_path)
             
-            # Extract business name (trade name)
-            business_name_pattern = r'Trade Name[:\s]*([A-Za-z\s&.,]+)'
-            business_name_match = re.search(business_name_pattern, text, re.IGNORECASE)
-            business_name = business_name_match.group(1).strip() if business_name_match else ""
+            if self.use_ai and text.strip():
+                return self._extract_gst_info_with_ai(text)
+            else:
+                return self._extract_gst_info_with_regex(text)
+                
+        except Exception as e:
+            logger.error(f"Error extracting GST info: {str(e)}")
+            return {}
+    
+    def _extract_text_from_file(self, file_path):
+        """Extract text from PDF or image file"""
+        try:
+            # Get file extension
+            _, ext = os.path.splitext(file_path.lower())
+            
+            if ext == '.pdf':
+                # Extract text from PDF
+                with open(file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    text = ""
+                    for page in pdf_reader.pages:
+                        text += page.extract_text()
+                    return text
+            elif ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']:
+                # Extract text from image using OCR
+                try:
+                    image = Image.open(file_path)
+                    text = pytesseract.image_to_string(image)
+                    return text
+                except Exception as ocr_error:
+                    logger.warning(f"⚠️ OCR failed: {ocr_error}. Trying without OCR.")
+                    return ""
+            else:
+                logger.warning(f"⚠️ Unsupported file format: {ext}")
+                return ""
+                
+        except Exception as e:
+            logger.error(f"Error extracting text from file: {str(e)}")
+            return ""
+    
+    def _extract_gst_info_with_ai(self, text):
+        """Extract GST information using Gemini AI"""
+        try:
+            prompt = f"""
+            Analyze the following GST document text and extract the required information. 
+            Return the data in JSON format with the following fields:
+            - registration_number: GST registration number (15 characters)
+            - legal_name: Legal name of the business
+            - trade_name: Trade name or business name
+            - address: Complete business address
+            - state: State name
+            - district: District name
+            - pincode: 6-digit pincode
+            - gst_status: GST registration status (Active, Inactive, Cancelled, etc.)
+            - business_type: Type of business (Proprietorship, Partnership, Private Limited, etc.)
+            
+            Document text:
+            {text[:4000]}  # Limit text to avoid token limits
+            
+            Return only valid JSON without any additional text or explanation.
+            """
+            
+            response = self.model.generate_content(prompt)
+            
+            if response and response.text:
+                # Clean the response to extract JSON
+                response_text = response.text.strip()
+                
+                # Remove markdown code blocks if present
+                if response_text.startswith('```json'):
+                    response_text = response_text[7:]
+                if response_text.endswith('```'):
+                    response_text = response_text[:-3]
+                if response_text.startswith('```'):
+                    response_text = response_text[3:]
+                
+                response_text = response_text.strip()
+                
+                try:
+                    extracted_data = json.loads(response_text)
+                    logger.info("✅ Successfully extracted GST data using Gemini AI")
+                    return extracted_data
+                except json.JSONDecodeError as e:
+                    logger.warning(f"⚠️ Failed to parse AI response as JSON: {e}. Falling back to regex.")
+                    return self._extract_gst_info_with_regex(text)
+            else:
+                logger.warning("⚠️ No response from Gemini AI. Falling back to regex.")
+                return self._extract_gst_info_with_regex(text)
+                
+        except Exception as e:
+            logger.error(f"❌ Error using Gemini AI for GST extraction: {e}. Falling back to regex.")
+            return self._extract_gst_info_with_regex(text)
+    
+    def _extract_gst_info_with_regex(self, text):
+        """Extract GST information using regex patterns (fallback method)"""
+        try:
+            # Extract GST number (registration number)
+            gst_number_pattern = r'GSTIN[:\s]*([0-9A-Z]{15})'
+            gst_number_match = re.search(gst_number_pattern, text, re.IGNORECASE)
+            gst_number = gst_number_match.group(1).strip() if gst_number_match else ""
+            
+            # Extract legal name
+            legal_name_pattern = r'Legal Name of Business[:\s]*([A-Za-z\s&.,]+)'
+            legal_name_match = re.search(legal_name_pattern, text, re.IGNORECASE)
+            legal_name = legal_name_match.group(1).strip() if legal_name_match else ""
+            
+            # Extract trade name (business name)
+            trade_name_pattern = r'Trade Name[:\s]*([A-Za-z\s&.,]+)'
+            trade_name_match = re.search(trade_name_pattern, text, re.IGNORECASE)
+            trade_name = trade_name_match.group(1).strip() if trade_name_match else ""
+            
+            # Extract address
+            address_pattern = r'Principal Place of Business[:\s]*([A-Za-z0-9\s,.\-/]+?)(?:\n|$)'
+            address_match = re.search(address_pattern, text, re.IGNORECASE)
+            address = address_match.group(1).strip() if address_match else ""
+            
+            # Extract state
+            state_pattern = r'State Name[:\s]*([A-Za-z\s]+)'
+            state_match = re.search(state_pattern, text, re.IGNORECASE)
+            state = state_match.group(1).strip() if state_match else ""
             
             # Extract district
             district_pattern = r'District[:\s]*([A-Za-z\s]+)'
             district_match = re.search(district_pattern, text, re.IGNORECASE)
             district = district_match.group(1).strip() if district_match else ""
+            
+            # Extract pincode
+            pincode_pattern = r'Pin Code[:\s]*([0-9]{6})'
+            pincode_match = re.search(pincode_pattern, text, re.IGNORECASE)
+            pincode = pincode_match.group(1).strip() if pincode_match else ""
             
             # Extract GST status
             gst_status_pattern = r'Status[:\s]*([A-Za-z\s]+)'
@@ -41,14 +184,20 @@ class DocumentProcessor:
             elif "proprietorship" in text.lower():
                 business_type = "Proprietorship"
             
+            logger.info("✅ Extracted GST data using regex patterns")
             return {
-                'business_name': business_name,
+                'registration_number': gst_number,
+                'legal_name': legal_name,
+                'trade_name': trade_name,
+                'address': address,
+                'state': state,
                 'district': district,
+                'pincode': pincode,
                 'gst_status': gst_status,
                 'business_type': business_type
             }
         except Exception as e:
-            print(f"Error extracting GST info: {str(e)}")
+            logger.error(f"Error in regex extraction: {str(e)}")
             return {}
     
     def extract_msme_info(self, pdf_path):

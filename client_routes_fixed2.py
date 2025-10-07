@@ -1661,6 +1661,70 @@ def extract_gst_data_direct():
         print(f"❌ Error in direct GST data extraction: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@client_bp.route('/clients/extract-gst-data', methods=['POST'])
+@jwt_required()
+def extract_gst_data_direct():
+    """Extract data from GST document directly without creating a client"""
+    try:
+        print(f"=== DIRECT GST DATA EXTRACTION REQUEST ===")
+        
+        # Check if DocumentProcessor is available
+        if not DOCUMENT_PROCESSOR_AVAILABLE or DocumentProcessor is None:
+            return jsonify({'error': 'Document processing service not available'}), 503
+        
+        # Check if file was uploaded
+        if 'gst_document' not in request.files:
+            return jsonify({'error': 'No GST document uploaded'}), 400
+        
+        file = request.files['gst_document']
+        if not file or not file.filename:
+            return jsonify({'error': 'Invalid GST document'}), 400
+        
+        # Create temporary file for processing
+        import tempfile
+        import os
+        
+        # Save uploaded file to temporary location
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1])
+        file.save(temp_file.name)
+        temp_file.close()
+        
+        gst_file_path = temp_file.name
+        print(f"💾 Saved uploaded GST document to temporary file: {gst_file_path}")
+        
+        # Process the GST document
+        try:
+            document_processor = DocumentProcessor()
+            extracted_data = document_processor.extract_gst_info(gst_file_path)
+            print(f"✅ Extracted GST data: {extracted_data}")
+            
+            # Clean up temporary file
+            try:
+                os.unlink(gst_file_path)
+                print(f"🧹 Cleaned up temporary file: {gst_file_path}")
+            except Exception as e:
+                print(f"⚠️ Failed to clean up temporary file: {e}")
+            
+            return jsonify({
+                'success': True,
+                'extracted_data': extracted_data
+            }), 200
+            
+        except Exception as e:
+            # Clean up temporary file
+            try:
+                os.unlink(gst_file_path)
+                print(f"🧹 Cleaned up temporary file after error: {gst_file_path}")
+            except Exception as cleanup_error:
+                print(f"⚠️ Failed to clean up temporary file after error: {cleanup_error}")
+            
+            print(f"❌ Error processing GST document: {str(e)}")
+            return jsonify({'error': f'Failed to process GST document: {str(e)}'}), 500
+        
+    except Exception as e:
+        print(f"❌ Error in direct GST data extraction: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @client_bp.route('/clients/<client_id>/extract-gst-data', methods=['POST'])
 @jwt_required()
 def extract_gst_data(client_id):
@@ -1754,136 +1818,136 @@ def extract_gst_data(client_id):
         print(f"❌ Error in extract_gst_data: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-    except Exception as e:
-        print(f"❌ Download error: {str(e)}")
-        print(f"📋 File info for {document_type}: {type(file_info)} - {str(file_info)[:200]}...")
+
+@client_bp.route('/clients/<client_id>/download/<document_type>')
+@jwt_required()
+def download_document(client_id, document_type):
+    try:
+        from flask import redirect, Response
+        import requests
+        from io import BytesIO
         
-        # Handle Cloudinary files
-        if isinstance(file_info, dict) and file_info.get('storage_type') == 'cloudinary':
-            cloudinary_url = file_info['url']
-            original_filename = file_info.get('original_filename', f'{document_type}.{file_info.get("format", "bin")}')
-            
-            try:
-                # Validate Cloudinary URL
-                if not cloudinary_url or not cloudinary_url.startswith('https://'):
-                    print(f"❌ Invalid Cloudinary URL: {cloudinary_url}")
-                    return jsonify({'error': 'Invalid document URL'}), 500
-                
-                # Download file from Cloudinary
-                print(f"📥 Downloading from Cloudinary: {cloudinary_url}")
-                cloudinary_response = requests.get(cloudinary_url, timeout=30, stream=True)
-                
-                print(f"📊 Cloudinary response status: {cloudinary_response.status_code}")
-                print(f"📊 Cloudinary response headers: {dict(cloudinary_response.headers)}")
-                
-                cloudinary_response.raise_for_status()
-                
-                # Get the file content
-                file_content = cloudinary_response.content
-                print(f"📦 Downloaded content size: {len(file_content)} bytes")
-                
-                # Determine the correct mimetype
-                file_format = file_info.get('format', '').lower()
-                if file_format == 'pdf':
-                    mimetype = 'application/pdf'
-                elif file_format in ['jpg', 'jpeg']:
-                    mimetype = 'image/jpeg'
-                elif file_format == 'png':
-                    mimetype = 'image/png'
-                elif file_format == 'gif':
-                    mimetype = 'image/gif'
-                elif file_format == 'webp':
-                    mimetype = 'image/webp'
-                else:
-                    mimetype = 'application/octet-stream'
-                
-                print(f"✅ Successfully downloaded {original_filename} ({len(file_content)} bytes)")
-                print(f"📄 File format: {file_format}, MIME type: {mimetype}")
-                
-                # Log PDF info but don't validate signature (trust Cloudinary)
-                if file_format == 'pdf':
-                    print(f"📄 PDF file detected: {original_filename}")
-                    print(f"Content type from Cloudinary: {cloudinary_response.headers.get('content-type', 'unknown')}")
-                    print(f"File size: {len(file_content)} bytes")
-                    # Trust Cloudinary's file format - no signature validation needed
-                
-                # Create proper Flask response with enhanced headers for PDF
-                response_headers = {
-                    'Content-Disposition': f'attachment; filename="{original_filename}"',
-                    'Content-Length': str(len(file_content)),
-                    'Content-Type': mimetype,
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache',
-                    'Expires': '0',
-                    'X-Content-Type-Options': 'nosniff',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
-                }
-                
-                # Additional headers for PDF files
-                if file_format == 'pdf':
-                    response_headers.update({
-                        'Content-Transfer-Encoding': 'binary',
-                        'Accept-Ranges': 'bytes',
-                        'X-Frame-Options': 'SAMEORIGIN'
-                    })
-                
-                flask_response = Response(
-                    file_content,
-                    mimetype=mimetype,
-                    headers=response_headers
-                )
-                
-                return flask_response
-                
+        print(f"🔍 Download request: client_id={client_id}, document_type={document_type}")
+        # Validate Cloudinary URL
+        if not cloudinary_url or not cloudinary_url.startswith('https://'):
+            print(f"❌ Invalid Cloudinary URL: {cloudinary_url}")
+            return jsonify({'error': 'Invalid document URL'}), 500
+        
+        # Download file from Cloudinary
+        print(f"📥 Downloading from Cloudinary: {cloudinary_url}")
+        cloudinary_response = requests.get(cloudinary_url, timeout=30, stream=True)
+        
+        print(f"📊 Cloudinary response status: {cloudinary_response.status_code}")
+        print(f"📊 Cloudinary response headers: {dict(cloudinary_response.headers)}")
+        
+        cloudinary_response.raise_for_status()
+        
+        # Get the file content
+        file_content = cloudinary_response.content
+        print(f"📦 Downloaded content size: {len(file_content)} bytes")
+        
+        # Determine the correct mimetype
+        file_format = file_info.get('format', '').lower()
+        if file_format == 'pdf':
+            mimetype = 'application/pdf'
+        elif file_format in ['jpg', 'jpeg']:
+            mimetype = 'image/jpeg'
+        elif file_format == 'png':
+            mimetype = 'image/png'
+        elif file_format == 'gif':
+            mimetype = 'image/gif'
+        elif file_format == 'webp':
+            mimetype = 'image/webp'
+        else:
+            mimetype = 'application/octet-stream'
+        
+        print(f"✅ Successfully downloaded {original_filename} ({len(file_content)} bytes)")
+        print(f"📄 File format: {file_format}, MIME type: {mimetype}")
+        
+        # Log PDF info but don't validate signature (trust Cloudinary)
+        if file_format == 'pdf':
+            print(f"📄 PDF file detected: {original_filename}")
+            print(f"Content type from Cloudinary: {cloudinary_response.headers.get('content-type', 'unknown')}")
+            print(f"File size: {len(file_content)} bytes")
+            # Trust Cloudinary's file format - no signature validation needed
+        
+        # Create proper Flask response with enhanced headers for PDF
+        response_headers = {
+            'Content-Disposition': f'attachment; filename="{original_filename}"',
+            'Content-Length': str(len(file_content)),
+            'Content-Type': mimetype,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+            'X-Content-Type-Options': 'nosniff',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+        }
+        
+        # Additional headers for PDF files
+        if file_format == 'pdf':
+            response_headers.update({
+                'Content-Transfer-Encoding': 'binary',
+                'Accept-Ranges': 'bytes',
+                'X-Frame-Options': 'SAMEORIGIN'
+            })
+        
+        flask_response = Response(
+            file_content,
+            mimetype=mimetype,
+            headers=response_headers
+        )
+        
+        return flask_response
+        
             except requests.exceptions.RequestException as e:
-                print(f"❌ Error downloading from Cloudinary: {str(e)}")
-                print(f"❌ Request exception type: {type(e)}")
-                if hasattr(e, 'response') and e.response is not None:
-                    print(f"❌ Response status: {e.response.status_code}")
-                    print(f"❌ Response text: {e.response.text[:500]}")
-                # Fallback: redirect to Cloudinary URL
-                return redirect(cloudinary_url)
+        print(f"❌ Error downloading from Cloudinary: {str(e)}")
+        print(f"❌ Request exception type: {type(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"❌ Response status: {e.response.status_code}")
+            print(f"❌ Response text: {e.response.text[:500]}")
+        # Fallback: redirect to Cloudinary URL
+        return redirect(cloudinary_url)
             except Exception as e:
-                print(f"❌ Error processing Cloudinary file: {str(e)}")
-                print(f"❌ Exception type: {type(e)}")
-                import traceback
-                print(f"❌ Full traceback: {traceback.format_exc()}")
-                return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
+        print(f"❌ Error processing Cloudinary file: {str(e)}")
+        print(f"❌ Exception type: {type(e)}")
+        import traceback
+        print(f"❌ Full traceback: {traceback.format_exc()}")
+        return jsonify({'error': f'Failed to download file: {str(e)}'}), 500
         
         # Handle string URLs (direct Cloudinary URLs)
         elif isinstance(file_info, str) and file_info.startswith('https://res.cloudinary.com'):
             try:
-                print(f"📥 Downloading from Cloudinary URL: {file_info}")
-                cloudinary_response = requests.get(file_info, timeout=30, stream=True)
-                cloudinary_response.raise_for_status()
-                
-                # Extract filename from URL or use document type
-                filename = f'{document_type}.{file_info.split(".")[-1] if "." in file_info else "bin"}'
-                
-                # Get the file content
-                file_content = cloudinary_response.content
-                
-                # Determine mimetype from URL extension
-                if file_info.lower().endswith('.pdf'):
-                    mimetype = 'application/pdf'
-                elif file_info.lower().endswith(('.jpg', '.jpeg')):
-                    mimetype = 'image/jpeg'
-                elif file_info.lower().endswith('.png'):
-                    mimetype = 'image/png'
-                elif file_info.lower().endswith('.gif'):
-                    mimetype = 'image/gif'
-                elif file_info.lower().endswith('.webp'):
-                    mimetype = 'image/webp'
-                else:
-                    mimetype = 'application/octet-stream'
-                
-                print(f"✅ Successfully downloaded {filename} ({len(file_content)} bytes)")
-                print(f"📄 MIME type: {mimetype}")
-                
-                # Log PDF info but don't validate signature (trust Cloudinary)
-                if mimetype == 'application/pdf':
+        print(f"📥 Downloading from Cloudinary URL: {file_info}")
+        cloudinary_response = requests.get(file_info, timeout=30, stream=True)
+        cloudinary_response.raise_for_status()
+        
+        # Extract filename from URL or use document type
+        filename = f'{document_type}.{file_info.split(".")[-1] if "." in file_info else "bin"}'
+        
+        # Get the file content
+        file_content = cloudinary_response.content
+        
+        # Determine mimetype from URL extension
+        if file_info.lower().endswith('.pdf'):
+            mimetype = 'application/pdf'
+        elif file_info.lower().endswith(('.jpg', '.jpeg')):
+            mimetype = 'image/jpeg'
+        elif file_info.lower().endswith('.png'):
+            mimetype = 'image/png'
+        elif file_info.lower().endswith('.gif'):
+            mimetype = 'image/gif'
+        elif file_info.lower().endswith('.webp'):
+            mimetype = 'image/webp'
+        else:
+            mimetype = 'application/octet-stream'
+        
+        print(f"✅ Successfully downloaded {filename} ({len(file_content)} bytes)")
+        print(f"📄 MIME type: {mimetype}")
+        
+        # Log PDF info but don't validate signature (trust Cloudinary)
+        if mimetype == 'application/pdf':
                     print(f"📄 PDF file detected from URL")
                     print(f"Content type from Cloudinary: {cloudinary_response.headers.get('content-type', 'unknown')}")
                     print(f"File size: {len(file_content)} bytes")
