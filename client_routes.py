@@ -112,7 +112,6 @@ if not MONGODB_URI:
     db = None
     clients_collection = None
     users_collection = None
-    enquiries_collection = None
 else:
     print(f"🔄 Client routes connecting to MongoDB...")
     print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
@@ -124,7 +123,6 @@ else:
         db.command("ping")
         clients_collection = db.clients
         users_collection = db.users
-        enquiries_collection = db.enquiries  # Add enquiries collection
         print("✅ MongoDB connection successful for client_routes module")
     except Exception as e:
         print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
@@ -137,7 +135,6 @@ else:
         db = None
         clients_collection = None
         users_collection = None
-        enquiries_collection = None
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""
@@ -256,8 +253,8 @@ def get_database_status():
         
         # Get collection stats
         collections = db.list_collection_names()
-        client_count = clients_collection.count_documents({}) if clients_collection is not None else 0
-        user_count = users_collection.count_documents({}) if users_collection is not None else 0
+        client_count = clients_collection.count_documents({}) if clients_collection else 0
+        user_count = users_collection.count_documents({}) if users_collection else 0
         
         return {
             'status': 'connected',
@@ -455,38 +452,6 @@ def create_client():
         # Insert client into database
         result = clients_collection.insert_one(client_data)
         
-        # Update enquiry with legal name and shortlisted status if enquiry_id is provided
-        if 'enquiry_id' in data and data['enquiry_id'] and enquiries_collection:
-            try:
-                enquiry_id = data['enquiry_id']
-                legal_name = data.get('legal_name', '')
-                
-                if ObjectId.is_valid(enquiry_id):
-                    # Update the enquiry with the legal name and mark as shortlisted
-                    update_fields = {}
-                    if legal_name:
-                        update_fields['legal_name'] = legal_name
-                    
-                    # Mark as shortlisted
-                    update_fields['shortlisted'] = True
-                    update_fields['shortlisted_at'] = datetime.utcnow()
-                    
-                    # Also sync optional_mobile_number to secondary_mobile_number in enquiry
-                    optional_mobile = data.get('optional_mobile_number', '')
-                    if optional_mobile:
-                        update_fields['secondary_mobile_number'] = optional_mobile
-                    
-                    result = enquiries_collection.update_one(
-                        {'_id': ObjectId(enquiry_id)},
-                        {'$set': update_fields}
-                    )
-                    if result.matched_count > 0:
-                        print(f"✅ Updated enquiry {enquiry_id} with legal name: {legal_name}, marked as shortlisted, and synced mobile numbers")
-                    else:
-                        print(f"⚠️ No matching enquiry found for ID: {enquiry_id}")
-            except Exception as e:
-                print(f"⚠️ Failed to update enquiry with legal name and shortlisted status: {str(e)}")
-        
         # Send WhatsApp notification for new client
         whatsapp_result = None
         if WHATSAPP_SERVICE_AVAILABLE and client_whatsapp_service:
@@ -504,14 +469,10 @@ def create_client():
         }
         
         # Add WhatsApp result to response if attempted
-        # Fix: Ensure whatsapp_result is a dict to prevent "Collection objects do not implement truth value testing" error
-        if whatsapp_result is not None and isinstance(whatsapp_result, dict):
-            response_data['whatsapp_sent'] = whatsapp_result.get('success', False)
-            if not whatsapp_result.get('success', True):
+        if whatsapp_result is not None:
+            response_data['whatsapp_sent'] = whatsapp_result['success']
+            if not whatsapp_result['success']:
                 response_data['whatsapp_error'] = whatsapp_result.get('error', 'Unknown error')
-        elif whatsapp_result is not None:
-            # Handle case where whatsapp_result might be a list or other type
-            response_data['whatsapp_error'] = 'Unexpected WhatsApp result format'
         
         return jsonify(response_data), 201
         
@@ -853,8 +814,7 @@ def update_client(client_id):
                     whatsapp_result = {'success': False, 'error': str(e)}
             
             # Add specific WhatsApp status to response for frontend feedback
-            # Fix: Ensure whatsapp_result is a dict to prevent "Collection objects do not implement truth value testing" error
-            if whatsapp_result is not None and isinstance(whatsapp_result, dict):
+            if whatsapp_result:
                 if whatsapp_result.get('success', False):
                     response_data['whatsapp_sent'] = True
                 else:
@@ -866,12 +826,8 @@ def update_client(client_id):
                         response_data['whatsapp_quota_exceeded'] = True
                     else:
                         response_data['whatsapp_error'] = whatsapp_result.get('error', 'Failed to send WhatsApp message')
-            elif whatsapp_result is not None:
-                # Handle case where whatsapp_result might be a MongoDB collection or other unexpected type
-                response_data['whatsapp_error'] = f'Unexpected WhatsApp result format: {type(whatsapp_result).__name__}'
-                logger.error(f"WhatsApp service returned unexpected type: {type(whatsapp_result)} - {whatsapp_result}")
             else:
-                # Indicate that a WhatsApp notification was attempted but no result was returned
+                # Indicate that a WhatsApp notification was attempted
                 response_data['whatsapp_notification'] = 'attempted'
         
         # Send notifications asynchronously to avoid blocking the response
@@ -1376,97 +1332,31 @@ def update_client_details(client_id):
                 # Get updated client data
                 updated_client = clients_collection.find_one({'_id': ObjectId(client_id)})
                 
-                # NEW: Sync optional_mobile_number to enquiry records
-                # Check if optional_mobile_number was updated
-                if 'optional_mobile_number' in update_data and enquiries_collection:
-                    new_optional_mobile = update_data.get('optional_mobile_number')
-                    old_optional_mobile = old_client.get('optional_mobile_number') if old_client else None
-                    
-                    # Only sync if the optional mobile number actually changed
-                    if new_optional_mobile != old_optional_mobile:
-                        primary_mobile = updated_client.get('mobile_number')
-                        if primary_mobile:
-                            # Update enquiry record with matching primary mobile number
-                            enquiry_result = enquiries_collection.update_one(
-                                {'mobile_number': primary_mobile},
-                                {'$set': {'secondary_mobile_number': new_optional_mobile}}
-                            )
-                            if enquiry_result.matched_count > 0:
-                                print(f"🔄 Synced optional_mobile_number to enquiry record for mobile: {primary_mobile}")
-                            else:
-                                print(f"⚠️ No matching enquiry found for mobile: {primary_mobile}")
-                
                 # Send multiple WhatsApp messages for all changes
-                # Track only the fields that actually changed
-                updated_fields = []
-                for field, new_value in update_data.items():
-                    # Skip timestamp and user tracking fields
-                    if field in ['updated_at', 'updated_by']:
-                        continue
-                    
-                    # For other fields, check if they actually changed
-                    old_value = old_client.get(field) if old_client else None
-                    
-                    # Special handling for payment_gateways_status
-                    if field == 'payment_gateways_status' and old_client:
-                        old_value = old_client.get('payment_gateways_status', {})
-                        # Compare dictionaries properly
-                        if new_value != old_value:
-                            updated_fields.append(field)
-                    # Special handling for payment_gateways
-                    elif field == 'payment_gateways' and old_client:
-                        old_value = old_client.get('payment_gateways', [])
-                        # Compare lists properly
-                        if set(new_value) != set(old_value):
-                            updated_fields.append(field)
-                    # Special handling for documents
-                    elif field == 'documents' and old_client:
-                        old_documents = old_client.get('documents', {})
-                        new_documents = new_value
-                        
-                        # Check if any document was added or changed
-                        document_changed = False
-                        for doc_key, doc_value in new_documents.items():
-                            if doc_key not in old_documents or old_documents[doc_key] != doc_value:
-                                document_changed = True
-                                # If IE Code document was added, also add 'ie_code' to updated_fields
-                                if doc_key == 'ie_code_document' and doc_value:
-                                    if 'ie_code' not in updated_fields:
-                                        updated_fields.append('ie_code')
-                                break
-                        
-                        if document_changed:
-                            updated_fields.append('documents')
-                    # Special handling for IE Code field
-                    elif field == 'ie_code' and old_client:
-                        old_ie_code = old_client.get('ie_code', '')
-                        if new_value != old_ie_code:
-                            updated_fields.append(field)
-                    # For all other fields
-                    elif new_value != old_value:
-                        updated_fields.append(field)
+                updated_fields = list(update_data.keys())
                 
-                print(f"📱 Fields that actually changed: {updated_fields}")
-                print(f"📱 WhatsApp service available: {WHATSAPP_SERVICE_AVAILABLE}")
-                print(f"📱 Client WhatsApp service: {client_whatsapp_service is not None}")
+                # Special handling for IE Code document uploads
+                # Check if IE Code document was uploaded in this update
+                if 'documents' in update_data:
+                    current_documents = update_data.get('documents', {})
+                    old_documents = old_client.get('documents', {}) if old_client else {}
+                    
+                    # If IE Code document is new, add it to updated_fields
+                    if ('ie_code_document' in current_documents and current_documents['ie_code_document'] and
+                        ('ie_code_document' not in old_documents or not old_documents['ie_code_document'])):
+                        if 'ie_code' not in updated_fields:
+                            updated_fields.append('ie_code')
+                        print(f"IE Code document detected as newly uploaded for client {client_id}")
                 
-                if updated_fields:
-                    print(f"📱 Sending WhatsApp notifications for {len(updated_fields)} changed fields...")
-                    # Pass old payment gateways status for comparison
-                    if old_client and 'payment_gateways_status' in update_data:
-                        old_client['old_payment_gateways_status'] = old_client.get('payment_gateways_status', {})
-                    whatsapp_results = client_whatsapp_service.send_multiple_client_update_messages(
-                        updated_client, updated_fields, old_client)
-                        
-                    print(f"📱 WhatsApp notification results: {whatsapp_results}")
-                else:
-                    print(f"📱 No fields changed, skipping WhatsApp notifications")
-                    whatsapp_results = []
+                # Pass old payment gateways status for comparison
+                if old_client and 'payment_gateways_status' in update_data:
+                    old_client['old_payment_gateways_status'] = old_client.get('payment_gateways_status', {})
+                whatsapp_results = client_whatsapp_service.send_multiple_client_update_messages(
+                    updated_client, updated_fields, old_client)
+                    
+                print(f"WhatsApp notification results: {whatsapp_results}")
             except Exception as e:
                 print(f"Error sending WhatsApp notification: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                # Ensure whatsapp_results is always a list even in error cases
                 whatsapp_results = [{'success': False, 'error': str(e)}]
         
         print(f"✅ Client update completed successfully")
@@ -1478,51 +1368,28 @@ def update_client_details(client_id):
         }
         
         # Add WhatsApp results to response if attempted
-        # Fix: Ensure whatsapp_results is always a list to prevent "Collection objects do not implement truth value testing" error
-        # Additional safety check to ensure whatsapp_results is always a list
-        success_count = 0  # Initialize success_count to prevent undefined variable error
-        if whatsapp_results is not None:
-            # If whatsapp_results is not a list, convert it to a list
-            if not isinstance(whatsapp_results, list):
-                # Handle case where whatsapp_results might be a MongoDB collection or other unexpected type
-                if hasattr(whatsapp_results, '__iter__') and not isinstance(whatsapp_results, (str, bytes)):
-                    # Convert iterable to list
-                    try:
-                        whatsapp_results = list(whatsapp_results)
-                    except Exception:
-                        # If conversion fails, wrap in list
-                        whatsapp_results = [whatsapp_results] if whatsapp_results is not None else []
-                else:
-                    # Wrap single object in list
-                    whatsapp_results = [whatsapp_results] if whatsapp_results is not None else []
+        if whatsapp_results:
+            # Check if any message was sent successfully
+            success_count = sum(1 for result in whatsapp_results if result.get('success', False))
+            response_data['whatsapp_sent'] = success_count > 0
             
-            # Now check if it's a list and has content
-            if isinstance(whatsapp_results, list) and len(whatsapp_results) > 0:
-                # Check if any message was sent successfully
-                success_count = sum(1 for result in whatsapp_results if isinstance(result, dict) and result.get('success', False))
-                response_data['whatsapp_sent'] = success_count > 0
-            
-            # Check for quota exceeded errors - only if whatsapp_results is a list
+            # Check for quota exceeded errors
             quota_exceeded = False
-            if isinstance(whatsapp_results, list):
-                for result in whatsapp_results:
-                    # Ensure result is a dict before accessing its properties
-                    if isinstance(result, dict) and not result.get('success', True):
-                        error_msg = result.get('error', '').lower()
-                        if ('quota exceeded' in error_msg or 
-                            'monthly quota has been exceeded' in error_msg or
-                            result.get('status_code') == 466):
-                            quota_exceeded = True
-                            break
+            for result in whatsapp_results:
+                if not result.get('success', True):
+                    error_msg = result.get('error', '').lower()
+                    if ('quota exceeded' in error_msg or 
+                        'monthly quota has been exceeded' in error_msg or
+                        result.get('status_code') == 466):
+                        quota_exceeded = True
+                        break
             
             response_data['whatsapp_quota_exceeded'] = quota_exceeded
             
-            # Only process failures if whatsapp_results is a list
-            if isinstance(whatsapp_results, list) and success_count < len(whatsapp_results):
+            if success_count < len(whatsapp_results):
                 # If some failed, include error from first failure
                 for result in whatsapp_results:
-                    # Ensure result is a dict before accessing its properties
-                    if isinstance(result, dict) and not result.get('success', True):
+                    if not result.get('success', True):
                         response_data['whatsapp_error'] = result.get('error', 'Some messages failed to send')
                         break
         

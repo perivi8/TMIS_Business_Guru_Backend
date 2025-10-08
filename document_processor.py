@@ -37,112 +37,16 @@ class DocumentProcessor:
     def extract_gst_info(self, file_path):
         """Extract information from GST document (PDF or image) using AI or fallback to regex"""
         try:
-            # If AI is available, use direct document analysis
-            if self.use_ai:
-                return self._extract_gst_info_with_ai_direct(file_path)
+            text = self._extract_text_from_file(file_path)
+            
+            if self.use_ai and text.strip():
+                return self._extract_gst_info_with_ai(text)
             else:
-                # Fallback to text extraction and regex
-                text = self._extract_text_from_file(file_path)
                 return self._extract_gst_info_with_regex(text)
                 
         except Exception as e:
             logger.error(f"Error extracting GST info: {str(e)}")
             return {}
-    
-    def _extract_gst_info_with_ai_direct(self, file_path):
-        """Extract GST information using Gemini AI directly on the document file"""
-        try:
-            # Create a more detailed prompt for document analysis
-            prompt = """
-            You are an expert in analyzing Indian GST registration certificates. 
-            Please carefully examine this document and extract the following information:
-            
-            Required Fields:
-            1. registration_number: GST registration number (exactly 15 characters, alphanumeric)
-            2. legal_name: Legal name of the business (from "Legal Name of Business" field)
-            3. trade_name: Trade name or business name (from "Trade Name" field)
-            4. address: Complete business address (specifically from "Principal Place of Business" field)
-            5. state: State name (from "State Name" field)
-            6. district: District name (from "District" field)
-            7. pincode: 6-digit pincode (from "Pin Code" field)
-            8. gst_status: GST registration status (Active, Inactive, Cancelled, etc.) (from "Status" field)
-            9. business_type: Type of business (Proprietorship, Partnership, Private Limited, etc.)
-            
-            Instructions:
-            - Extract information exactly as it appears in the document
-            - If any field is not found, leave it as an empty string
-            - For address, specifically look for "Principal Place of Business" section
-            - Be very careful with pincode - it should be exactly 6 digits
-            - Double-check all extracted information for accuracy
-            - Return only valid JSON without any additional text or explanation
-            
-            Return format:
-            {
-                "registration_number": "",
-                "legal_name": "",
-                "trade_name": "",
-                "address": "",
-                "state": "",
-                "district": "",
-                "pincode": "",
-                "gst_status": "",
-                "business_type": ""
-            }
-            """
-            
-            # Upload the file and analyze it with Gemini
-            myfile = genai.upload_file(file_path)
-            logger.info(f"📁 Uploaded file for AI analysis: {file_path}")
-            
-            # Wait for file processing
-            import time
-            while myfile.state.name == "PROCESSING":
-                time.sleep(10)
-                myfile = genai.get_file(myfile.name)
-            
-            if myfile.state.name == "FAILED":
-                logger.error(f"❌ File processing failed for {file_path}")
-                # Fallback to text extraction
-                text = self._extract_text_from_file(file_path)
-                return self._extract_gst_info_with_regex(text)
-            
-            # Generate content using the uploaded file
-            response = self.model.generate_content([prompt, myfile])
-            
-            if response and response.text:
-                # Clean the response to extract JSON
-                response_text = response.text.strip()
-                
-                # Remove markdown code blocks if present
-                if response_text.startswith('```json'):
-                    response_text = response_text[7:]
-                if response_text.endswith('```'):
-                    response_text = response_text[:-3]
-                if response_text.startswith('```'):
-                    response_text = response_text[3:]
-                
-                response_text = response_text.strip()
-                
-                try:
-                    extracted_data = json.loads(response_text)
-                    logger.info("✅ Successfully extracted GST data using Gemini AI direct document analysis")
-                    return extracted_data
-                except json.JSONDecodeError as e:
-                    logger.warning(f"⚠️ Failed to parse AI response as JSON: {e}")
-                    # Fallback to text extraction and AI analysis
-                    text = self._extract_text_from_file(file_path)
-                    return self._extract_gst_info_with_ai(text)
-            else:
-                logger.warning("⚠️ No response from Gemini AI. Falling back to text extraction.")
-                # Fallback to text extraction
-                text = self._extract_text_from_file(file_path)
-                return self._extract_gst_info_with_ai(text)
-                
-        except Exception as e:
-            logger.error(f"❌ Error using Gemini AI for direct GST extraction: {e}")
-            # Fallback to text extraction
-            text = self._extract_text_from_file(file_path)
-            return self._extract_gst_info_with_ai(text)
     
     def _extract_text_from_file(self, file_path):
         """Extract text from PDF or image file"""
@@ -176,7 +80,7 @@ class DocumentProcessor:
             return ""
     
     def _extract_gst_info_with_ai(self, text):
-        """Extract GST information using Gemini AI from extracted text"""
+        """Extract GST information using Gemini AI"""
         try:
             prompt = f"""
             Analyze the following GST document text and extract the required information. 

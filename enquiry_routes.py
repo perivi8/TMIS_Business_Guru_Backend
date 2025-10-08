@@ -70,7 +70,6 @@ try:
     # Create collections
     enquiries_collection = db.enquiries
     users_collection = db.users
-    clients_collection = db.clients
     
     # Create indexes for better performance
     try:
@@ -90,7 +89,6 @@ except Exception as e:
     db = None
     enquiries_collection = None
     users_collection = None
-    clients_collection = None
 
 def serialize_enquiry(enquiry):
     """Convert MongoDB document to JSON serializable format"""
@@ -316,10 +314,7 @@ def create_enquiry():
         staff = str(data.get('staff', '')).strip()
         comments = str(data.get('comments', '')).strip()
         
-        # Get legal name if provided
-        legal_name = str(data.get('legal_name', '')).strip() if data.get('legal_name') else ''
-        
-        logger.info(f"Wati name: '{wati_name}', Staff: '{staff}', Comments: '{comments}', Legal Name: '{legal_name}'")
+        logger.info(f"Wati name: '{wati_name}', Staff: '{staff}', Comments: '{comments}'")
         
         if not wati_name:
             return jsonify({'error': 'Wati name is required'}), 400
@@ -338,12 +333,12 @@ def create_enquiry():
         
         enquiry_data = {
             'wati_name': data.get('wati_name'),
-            'legal_name': legal_name,  # Add legal name field
             'user_name': data.get('user_name'),
             'mobile_number': mobile_number,
             'secondary_mobile_number': secondary_mobile,  # Use the validated variable
             'gst': gst_for_db,
             'gst_status': data.get('gst_status', ''),
+            'business_type': data.get('business_type'),
             'business_nature': data.get('business_nature'),
             'staff': data.get('staff'),
             'comments': data.get('comments'),
@@ -441,249 +436,6 @@ def create_enquiry():
         logger.error(f"Error creating enquiry: {str(e)}", exc_info=True)
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
-@enquiry_bp.route('/public/check-mobile', methods=['POST'])
-def check_mobile_exists():
-    """Check if mobile number already exists in enquiry records (public endpoint)"""
-    # Check if database is available
-    if db is None or enquiries_collection is None:
-        return jsonify({'error': 'Database not available'}), 500
-    
-    try:
-        data = request.get_json()
-        mobile_number = data.get('mobile_number', '').strip()
-        
-        if not mobile_number:
-            return jsonify({'exists': False, 'message': 'No mobile number provided'}), 200
-        
-        # Check if mobile number exists in enquiry records
-        existing_enquiry = enquiries_collection.find_one({
-            '$or': [
-                {'mobile_number': mobile_number},
-                {'secondary_mobile_number': mobile_number}
-            ]
-        })
-        
-        if existing_enquiry:
-            return jsonify({
-                'exists': True,
-                'message': 'This mobile number is already registered with us. Please use a different number or contact support if this is your number.'
-            }), 200
-        else:
-            return jsonify({
-                'exists': False,
-                'message': 'Mobile number is available'
-            }), 200
-            
-    except Exception as e:
-        logger.error(f"Error checking mobile number: {str(e)}")
-        return jsonify({'error': 'Failed to check mobile number'}), 500
-
-@enquiry_bp.route('/public/enquiries', methods=['POST'])
-def create_public_enquiry():
-    """Create a new enquiry from public form (no authentication required)"""
-    # Check if database is available
-    if db is None or enquiries_collection is None:
-        return jsonify({'error': 'Database not available'}), 500
-    
-    try:
-        data = request.get_json()
-        logger.info(f"Received public enquiry data: {data}")
-        
-        # Validate required fields
-        required_fields = ['wati_name', 'mobile_number']
-        for field in required_fields:
-            if not data.get(field):
-                return jsonify({'error': f'Missing required field: {field}'}), 400
-        
-        # Validate mobile number format
-        mobile_number = str(data.get('mobile_number', '')).strip()
-        if not mobile_number.isdigit() or len(mobile_number) < 10 or len(mobile_number) > 15:
-            return jsonify({'error': 'Mobile number must be 10-15 digits'}), 400
-        
-        # Check for duplicate mobile number
-        existing_enquiry = enquiries_collection.find_one({'mobile_number': mobile_number})
-        if existing_enquiry:
-            return jsonify({'error': 'Mobile number already exists. Please use a different number.'}), 400
-        
-        # Validate secondary mobile number if provided and check for duplicates
-        secondary_mobile = data.get('secondary_mobile_number')
-        if secondary_mobile and str(secondary_mobile).strip():
-            secondary_mobile = str(secondary_mobile).strip()
-            if not secondary_mobile.isdigit() or len(secondary_mobile) < 10 or len(secondary_mobile) > 15:
-                return jsonify({'error': 'Secondary mobile number must be 10-15 digits'}), 400
-            
-            # Check if secondary mobile is same as primary
-            if secondary_mobile == mobile_number:
-                return jsonify({'error': 'Secondary mobile number cannot be same as primary mobile number'}), 400
-            
-            # Check for duplicate secondary mobile number
-            existing_secondary = enquiries_collection.find_one({'mobile_number': secondary_mobile})
-            if existing_secondary:
-                return jsonify({'error': 'Secondary mobile number already exists. Please use a different number.'}), 400
-            
-            # Also check if secondary mobile exists as secondary mobile in other records
-            existing_as_secondary = enquiries_collection.find_one({'secondary_mobile_number': secondary_mobile})
-            if existing_as_secondary:
-                return jsonify({'error': 'Secondary mobile number already exists. Please use a different number.'}), 400
-        else:
-            secondary_mobile = None
-        
-        # Handle GST and GST status properly
-        gst_value = str(data.get('gst', '')).strip()
-        gst_status_value = ''
-        
-        # Only save GST status if GST is selected (Yes or No)
-        if gst_value in ['Yes', 'No']:
-            if gst_value == 'Yes':
-                gst_status_value = str(data.get('gst_status', '')).strip()
-                if not gst_status_value:
-                    return jsonify({'error': 'GST status is required when GST is Yes'}), 400
-        else:
-            gst_value = ''  # Set to empty if not selected
-        
-        # Create enquiry document
-        enquiry = {
-            'wati_name': data['wati_name'],
-            'mobile_number': mobile_number,
-            'secondary_mobile_number': secondary_mobile,
-            'business_nature': data.get('business_nature', ''),
-            'gst': gst_value,
-            'gst_status': gst_status_value,
-            'staff': data.get('staff', ''),
-            'comments': data.get('comments', 'Public enquiry submission'),
-            'additional_comments': data.get('additional_comments', ''),
-            'status': 'Active',  # Default status for public enquiries
-            'source': 'Public Form',  # Mark as public enquiry
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow()
-        }
-        
-        # Insert into database
-        result = enquiries_collection.insert_one(enquiry)
-        
-        # Retrieve the created enquiry for WhatsApp
-        created_enquiry = enquiries_collection.find_one({'_id': result.inserted_id})
-        
-        # Prepare response
-        enquiry['_id'] = str(result.inserted_id)
-        enquiry['created_at'] = enquiry['created_at'].isoformat()
-        enquiry['updated_at'] = enquiry['updated_at'].isoformat()
-        
-        # Send WhatsApp welcome message for public enquiry
-        whatsapp_result = {'success': False, 'error': 'WhatsApp service not available'}
-        try:
-            if whatsapp_service is not None and created_enquiry is not None:
-                logger.info(f"Attempting to send WhatsApp welcome message to {mobile_number} for public enquiry")
-                
-                # Send public enquiry welcome message
-                whatsapp_result = whatsapp_service.send_enquiry_message(
-                    created_enquiry, 
-                    message_type='public_welcome'
-                )
-                
-                if whatsapp_result['success']:
-                    logger.info(f"WhatsApp welcome message sent successfully to {mobile_number}")
-                    enquiry['whatsapp_sent'] = True
-                    enquiry['whatsapp_message_id'] = whatsapp_result.get('message_id')
-                    enquiry['whatsapp_notification'] = 'Welcome message sent via WhatsApp'
-                else:
-                    error_msg = whatsapp_result.get('error', 'Unknown error')
-                    logger.warning(f"Failed to send WhatsApp message: {error_msg}")
-                    enquiry['whatsapp_sent'] = False
-                    enquiry['whatsapp_error'] = error_msg
-            else:
-                logger.warning("WhatsApp service is not initialized for public enquiry")
-                enquiry['whatsapp_sent'] = False
-                enquiry['whatsapp_error'] = "WhatsApp service not available"
-                
-        except Exception as whatsapp_error:
-            logger.error(f"WhatsApp service error for public enquiry: {str(whatsapp_error)}")
-            enquiry['whatsapp_sent'] = False
-            enquiry['whatsapp_error'] = str(whatsapp_error)
-        
-        logger.info(f"Successfully created public enquiry {result.inserted_id}")
-        return jsonify({
-            'success': True,
-            'message': 'Enquiry submitted successfully',
-            '_id': str(result.inserted_id),
-            'enquiry': enquiry,
-            'whatsapp_result': whatsapp_result
-        }), 201
-        
-    except Exception as e:
-        logger.error(f"Error creating public enquiry: {str(e)}", exc_info=True)
-        return jsonify({'error': f'Failed to submit enquiry: {str(e)}'}), 500
-
-def send_staff_assignment_messages(enquiry_data, staff_name):
-    """Send three automated WhatsApp messages when staff is assigned to an enquiry"""
-    try:
-        if whatsapp_service is None:
-            logger.error("WhatsApp service is not initialized")
-            return {
-                'success': False,
-                'error': "WhatsApp service not available - Check GreenAPI configuration"
-            }
-        
-        mobile_number = enquiry_data.get('mobile_number')
-        if not mobile_number:
-            return {
-                'success': False,
-                'error': 'No mobile number provided'
-            }
-        
-        customer_name = enquiry_data.get('wati_name', 'Sir/Madam')
-        
-        # Message 1: Staff introduction
-        message1 = f"""Hi {customer_name}
-
-This is {staff_name}
-
-How can I help you
-
-We provide collateral free loan for all kinds of businesses based on transactions
-
-Loan from 5 lacs to 5 crores - GST is must
-
-Working Hours : 10.00AM - 6.00PM"""
-        
-        # Send first message
-        result1 = whatsapp_service.send_message(mobile_number, message1)
-        if not result1['success']:
-            logger.error(f"Failed to send first staff assignment message: {result1.get('error')}")
-            return result1
-        
-        # Message 2: Business information request
-        message2 = "Could you please tell us about your business and its nature"
-        
-        # Send second message
-        result2 = whatsapp_service.send_message(mobile_number, message2)
-        if not result2['success']:
-            logger.error(f"Failed to send second staff assignment message: {result2.get('error')}")
-            return result2
-        
-        # Message 3: Loan amount request
-        message3 = "What is the loan amount you require?"
-        
-        # Send third message
-        result3 = whatsapp_service.send_message(mobile_number, message3)
-        if not result3['success']:
-            logger.error(f"Failed to send third staff assignment message: {result3.get('error')}")
-            return result3
-        
-        logger.info(f"Successfully sent all staff assignment messages to {mobile_number}")
-        return {
-            'success': True,
-            'message': 'All staff assignment messages sent successfully',
-            'results': [result1, result2, result3]
-        }
-        
-    except Exception as e:
-        logger.error(f"Error sending staff assignment messages: {str(e)}")
-        return {
-            'success': False,
-            'error': f'Error sending staff assignment messages: {str(e)}'
-        }
-
 @enquiry_bp.route('/enquiries/<enquiry_id>', methods=['PUT'])
 @jwt_required()
 def update_enquiry(enquiry_id):
@@ -709,14 +461,6 @@ def update_enquiry(enquiry_id):
         existing_enquiry = enquiries_collection.find_one({'_id': ObjectId(enquiry_id)})
         if not existing_enquiry:
             return jsonify({'error': 'Enquiry not found'}), 404
-        
-        # Check if trying to change staff after it's been assigned
-        existing_staff = existing_enquiry.get('staff', '')
-        if 'staff' in data and existing_staff and existing_staff.strip():
-            # Staff is already assigned, check if trying to change it
-            new_staff = data['staff']
-            if new_staff != existing_staff:
-                return jsonify({'error': 'Staff is already assigned and cannot be changed'}), 400
         
         # Validate mobile numbers if provided (accept 10-15 digits with country code)
         if 'mobile_number' in data:
@@ -752,9 +496,9 @@ def update_enquiry(enquiry_id):
         
         # Add fields to update
         updatable_fields = [
-            'date', 'wati_name', 'legal_name', 'user_name', 'mobile_number', 
+            'date', 'wati_name', 'user_name', 'mobile_number', 
             'secondary_mobile_number', 'gst', 'gst_status', 
-            'business_nature', 'staff', 'comments', 'additional_comments'
+            'business_type', 'business_nature', 'staff', 'comments', 'additional_comments'
         ]
         
         for field in updatable_fields:
@@ -772,52 +516,11 @@ def update_enquiry(enquiry_id):
                 else:
                     update_doc[field] = data[field]
         
-        # Check if staff is being assigned (changed from empty to a value)
-        staff_assignment_notification = None
-        if ('staff' in data and data['staff'] and 
-            (not existing_staff or not existing_staff.strip())):
-            # Staff is being assigned for the first time
-            staff_name = data['staff']
-            logger.info(f"Staff {staff_name} is being assigned to enquiry {enquiry_id}")
-            
-            # Send the three automated WhatsApp messages
-            whatsapp_result = send_staff_assignment_messages(existing_enquiry, staff_name)
-            if whatsapp_result['success']:
-                staff_assignment_notification = "Staff assignment messages sent successfully"
-                logger.info(f"Staff assignment messages sent to {existing_enquiry.get('mobile_number')}")
-            else:
-                staff_assignment_notification = f"Failed to send staff assignment messages: {whatsapp_result.get('error')}"
-                logger.error(f"Failed to send staff assignment messages: {whatsapp_result.get('error')}")
-        
         # Update enquiry
         result = enquiries_collection.update_one(
             {'_id': ObjectId(enquiry_id)},
             {'$set': update_doc}
         )
-        
-        # NEW: Sync secondary_mobile_number to client records when updated
-        # Check if secondary_mobile_number was updated and sync to corresponding client
-        if 'secondary_mobile_number' in update_doc and clients_collection is not None:
-            try:
-                new_secondary_mobile = update_doc.get('secondary_mobile_number')
-                old_secondary_mobile = existing_enquiry.get('secondary_mobile_number') if existing_enquiry else None
-                
-                # Only sync if the secondary mobile number actually changed
-                if new_secondary_mobile != old_secondary_mobile:
-                    primary_mobile = existing_enquiry.get('mobile_number')
-                    if primary_mobile:
-                        # Update client record with matching primary mobile number
-                        client_result = clients_collection.update_one(
-                            {'mobile_number': primary_mobile},
-                            {'$set': {'optional_mobile_number': new_secondary_mobile}}
-                        )
-                        if client_result.matched_count > 0:
-                            logger.info(f"🔄 Synced secondary_mobile_number to client record for mobile: {primary_mobile}")
-                        else:
-                            logger.warning(f"⚠️ No matching client found for mobile: {primary_mobile}")
-            except Exception as sync_error:
-                logger.error(f"Error syncing secondary_mobile_number to client: {str(sync_error)}")
-                # Don't fail the entire update if client sync fails
         
         if result.modified_count == 0:
             return jsonify({'error': 'No changes made'}), 400
@@ -825,10 +528,6 @@ def update_enquiry(enquiry_id):
         # Retrieve updated enquiry
         updated_enquiry = enquiries_collection.find_one({'_id': ObjectId(enquiry_id)})
         serialized_enquiry = serialize_enquiry(updated_enquiry)
-        
-        # Add staff assignment notification if applicable
-        if staff_assignment_notification:
-            serialized_enquiry['staff_assignment_notification'] = staff_assignment_notification
         
         # Send WhatsApp message when enquiry is updated (similar to create_enquiry)
         try:
