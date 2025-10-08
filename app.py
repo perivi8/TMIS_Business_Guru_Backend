@@ -1724,27 +1724,26 @@ except Exception as e:
                 'fallback': True
             }), 500
 
-# Import and register enquiry routes
+# Export app for main.py to use
+
+# Register blueprints at the end of the file
 try:
-    print("🔄 Importing enquiry routes...")
     from enquiry_routes import enquiry_bp
     app.register_blueprint(enquiry_bp, url_prefix='/api')
-    print("✅ Enquiry routes registered successfully")
+    print("✅ Enquiry blueprint registered successfully")
 except Exception as e:
-    print(f"❌ Error importing enquiry routes: {e}")
+    print(f"❌ Failed to register enquiry blueprint: {e}")
 
-# Register Chatbot Routes
+# Direct route registration for webhook (fallback)
 try:
-    print("🔄 Importing chatbot routes...")
-    from chatbot_routes import chatbot_bp
-    app.register_blueprint(chatbot_bp)
-    print("✅ Chatbot routes registered successfully")
+    from enquiry_routes import handle_incoming_whatsapp
+    app.add_url_rule('/api/enquiries/whatsapp/webhook', 'handle_incoming_whatsapp', handle_incoming_whatsapp, methods=['POST'])
+    print("✅ Webhook route registered directly")
 except Exception as e:
-    print(f"❌ Error importing chatbot routes: {e}")
-    
-    # Create a simple fallback enquiry endpoint
-    @app.route('/api/enquiries', methods=['GET'])
-    @jwt_required()
+    print(f"❌ Failed to register webhook route directly: {e}")
+
+# Export app for main.py to use
+
     def get_enquiries_fallback():
         try:
             print("=== FALLBACK ENQUIRIES ENDPOINT ===")
@@ -1876,6 +1875,47 @@ def register_realtime():
     except Exception as e:
         print(f"Registration error: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/whatsapp/setup-webhook', methods=['POST'])
+@jwt_required()
+def setup_whatsapp_webhook():
+    """Setup WhatsApp webhook for incoming messages"""
+    try:
+        # Import GreenAPI service
+        from greenapi_whatsapp_service import whatsapp_service
+        
+        if not whatsapp_service or not whatsapp_service.api_available:
+            return jsonify({
+                'success': False,
+                'error': 'GreenAPI service not available',
+                'solution': 'Check GREENAPI_INSTANCE_ID and GREENAPI_TOKEN in .env'
+            }), 500
+        
+        # Get the server's base URL from request or environment
+        base_url = request.host_url.rstrip('/')
+        webhook_url = f"{base_url}/api/enquiries/whatsapp/webhook"
+        
+        # Setup webhook
+        result = whatsapp_service.setup_webhook(webhook_url)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': 'Webhook setup instructions provided',
+                'webhook_url': webhook_url,
+                'instructions': result['instructions']
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': result['error']
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Webhook setup failed: {str(e)}'
+        }), 500
 
 # GreenAPI WhatsApp test endpoint
 @app.route('/api/test-greenapi', methods=['POST'])

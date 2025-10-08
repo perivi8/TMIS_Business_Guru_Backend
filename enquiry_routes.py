@@ -1035,3 +1035,230 @@ def get_whatsapp_templates():
     except Exception as e:
         logger.error(f"Error getting WhatsApp templates: {str(e)}")
         return jsonify({'error': f'Failed to get templates: {str(e)}'}), 500
+
+@enquiry_bp.route('/enquiries/whatsapp/webhook', methods=['POST'])
+def handle_incoming_whatsapp():
+    """Handle incoming WhatsApp messages from GreenAPI webhook"""
+    try:
+        # Get the incoming data
+        data = request.get_json()
+        
+        logger.info(f"📥 Incoming WhatsApp webhook data: {data}")
+        
+        # Extract relevant information from the webhook payload
+        # GreenAPI webhook structure
+        if 'message' in data and 'chatId' in data:
+            message_data = data['message']
+            chat_id = data['chatId']
+            
+            # Extract sender information
+            sender_number = chat_id.replace('@c.us', '')  # Remove @c.us suffix
+            message_text = message_data.get('textMessage', {}).get('text', '')
+            
+            # Check if this is the "I am interested" message
+            if "i am interested" in message_text.lower() or "interested" in message_text.lower():
+                # Create a new enquiry record
+                new_enquiry = {
+                    'date': datetime.utcnow(),
+                    'wati_name': f"WhatsApp User ({sender_number})",  # Default name until we get actual name
+                    'mobile_number': sender_number,
+                    'gst': '',
+                    'business_type': '',
+                    'business_nature': '',
+                    'staff': '',
+                    'comments': 'New Enquiry - Interested',
+                    'additional_comments': '',
+                    'whatsapp_status': 'received',
+                    'whatsapp_message_id': message_data.get('idMessage', ''),
+                    'whatsapp_sent': True,
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                # Try to get sender's actual name if available
+                if 'senderName' in data:
+                    new_enquiry['wati_name'] = data['senderName']
+                elif 'contact' in data and 'name' in data['contact']:
+                    new_enquiry['wati_name'] = data['contact']['name']
+                
+                # Insert into database
+                if enquiries_collection is not None:
+                    result = enquiries_collection.insert_one(new_enquiry)
+                    new_enquiry['_id'] = str(result.inserted_id)
+                    
+                    logger.info(f"✅ New enquiry created from WhatsApp message: {new_enquiry['_id']}")
+                    
+                    # Emit socket event to notify frontend
+                    from app import socketio
+                    socketio.emit('new_enquiry', new_enquiry)
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': 'Enquiry created successfully',
+                        'enquiry_id': new_enquiry['_id']
+                    }), 200
+                else:
+                    logger.error("❌ Database not available for enquiry creation")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Database not available'
+                    }), 500
+            else:
+                logger.info(f"📥 Received WhatsApp message but not 'interested' message: {message_text}")
+                return jsonify({
+                    'success': True,
+                    'message': 'Message received but not processed as enquiry'
+                }), 200
+        else:
+            logger.warning(f"⚠️ Unexpected webhook data structure: {data}")
+            return jsonify({
+                'success': False,
+                'error': 'Unexpected data structure'
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"❌ Error handling incoming WhatsApp message: {str(e)}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return jsonify({
+            'success': False,
+            'error': f'Error processing webhook: {str(e)}'
+        }), 500
+
+@enquiry_bp.route('/whatsapp/public-send', methods=['POST'])
+def public_send_whatsapp():
+    """Send WhatsApp message for public users without authentication"""
+    try:
+        data = request.get_json()
+        
+        if not data or 'mobile_number' not in data:
+            return jsonify({'error': 'Mobile number is required'}), 400
+        
+        mobile_number = data['mobile_number']
+        message_type = data.get('message_type', 'new_enquiry')
+        wati_name = data.get('wati_name', 'Public User')
+        
+        logger.info(f"📱 Public WhatsApp request - Mobile: {mobile_number}, Type: {message_type}")
+        
+        # Create enquiry data
+        enquiry_data = {
+            'wati_name': wati_name,
+            'mobile_number': mobile_number,
+            'comments': 'New Enquiry - Interested'
+        }
+        
+        # Check if WhatsApp service is available
+        if whatsapp_service is None or not whatsapp_service.api_available:
+            # If service is not available, create the enquiry record anyway
+            # and return success so the frontend can redirect to WhatsApp
+            logger.info("WhatsApp service not available, creating enquiry record only")
+            
+            # Create a new enquiry record
+            new_enquiry = {
+                'date': datetime.utcnow(),
+                'wati_name': wati_name,
+                'mobile_number': mobile_number,
+                'gst': '',
+                'business_type': '',
+                'business_nature': '',
+                'staff': '',
+                'comments': 'New Enquiry - Interested',
+                'additional_comments': '',
+                'whatsapp_status': 'pending',
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow()
+            }
+            
+            # Insert into database
+            if enquiries_collection is not None:
+                result = enquiries_collection.insert_one(new_enquiry)
+                new_enquiry['_id'] = str(result.inserted_id)
+                
+                logger.info(f"✅ New public enquiry created: {new_enquiry['_id']}")
+                
+                # Emit socket event to notify frontend
+                try:
+                    from app import socketio
+                    socketio.emit('new_enquiry', new_enquiry)
+                except Exception as socket_error:
+                    logger.error(f"❌ Error emitting socket event: {socket_error}")
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'Enquiry created successfully',
+                    'enquiry_id': new_enquiry['_id'],
+                    'whatsapp_redirect': True
+                }), 200
+            else:
+                logger.error("❌ Database not available for enquiry creation")
+                return jsonify({
+                    'success': False,
+                    'error': 'Database not available'
+                }), 500
+        
+        # If service is available, send the message
+        result = whatsapp_service.send_enquiry_message(enquiry_data, message_type)
+        
+        logger.info(f"Public WhatsApp send result: {result}")
+        
+        # Create a new enquiry record regardless of WhatsApp send result
+        new_enquiry = {
+            'date': datetime.utcnow(),
+            'wati_name': wati_name,
+            'mobile_number': mobile_number,
+            'gst': '',
+            'business_type': '',
+            'business_nature': '',
+            'staff': '',
+            'comments': 'New Enquiry - Interested',
+            'additional_comments': '',
+            'whatsapp_status': 'sent' if result['success'] else 'failed',
+            'whatsapp_message_id': result.get('message_id', ''),
+            'whatsapp_error': result.get('error', '') if not result['success'] else '',
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        # Insert into database
+        if enquiries_collection is not None:
+            db_result = enquiries_collection.insert_one(new_enquiry)
+            new_enquiry['_id'] = str(db_result.inserted_id)
+            
+            logger.info(f"✅ New public enquiry created: {new_enquiry['_id']}")
+            
+            # Emit socket event to notify frontend
+            try:
+                from app import socketio
+                socketio.emit('new_enquiry', new_enquiry)
+            except Exception as socket_error:
+                logger.error(f"❌ Error emitting socket event: {socket_error}")
+        else:
+            logger.error("❌ Database not available for enquiry creation")
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'message': 'WhatsApp message sent and enquiry created successfully',
+                'message_id': result.get('message_id'),
+                'enquiry_id': new_enquiry['_id'] if '_id' in new_enquiry else None,
+                'mobile_number': mobile_number,
+                'message_type': message_type,
+                'whatsapp_redirect': True
+            }), 200
+        else:
+            # Even if WhatsApp send failed, we still created the enquiry
+            return jsonify({
+                'success': True,
+                'message': 'Enquiry created successfully (WhatsApp message may have failed)',
+                'enquiry_id': new_enquiry['_id'] if '_id' in new_enquiry else None,
+                'mobile_number': mobile_number,
+                'message_type': message_type,
+                'whatsapp_error': result.get('error', ''),
+                'whatsapp_redirect': True
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"Error in public WhatsApp send: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({'error': f'Public WhatsApp send failed: {str(e)}'}), 500

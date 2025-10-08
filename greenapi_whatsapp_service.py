@@ -565,6 +565,49 @@ Thank you and have a great day! 🌟😊"""
         # Default fallback
         return 'new_enquiry'
     
+    def setup_webhook(self, webhook_url: str) -> Dict[str, Any]:
+        """
+        Set up webhook URL for receiving incoming messages
+        Note: This requires configuring the webhook in the GreenAPI dashboard
+        """
+        try:
+            if not self.api_available:
+                return {
+                    'success': False,
+                    'error': 'GreenAPI service not available'
+                }
+            
+            logger.info(f"🔧 Setting up webhook URL: {webhook_url}")
+            
+            # For GreenAPI, webhooks are typically configured in the dashboard
+            # But we can log the expected URL for reference
+            logger.info(f"ℹ️  To configure webhook in GreenAPI dashboard:")
+            logger.info(f"   1. Go to https://console.green-api.com")
+            logger.info(f"   2. Select your instance")
+            logger.info(f"   3. Go to Settings > Webhooks")
+            logger.info(f"   4. Set Webhook URL to: {webhook_url}")
+            logger.info(f"   5. Enable 'Incoming Message' webhook")
+            
+            return {
+                'success': True,
+                'message': 'Webhook setup instructions provided',
+                'webhook_url': webhook_url,
+                'instructions': [
+                    'Go to https://console.green-api.com',
+                    'Select your instance',
+                    'Go to Settings > Webhooks',
+                    'Set Webhook URL to the provided URL',
+                    'Enable "Incoming Message" webhook'
+                ]
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error setting up webhook: {str(e)}")
+            return {
+                'success': False,
+                'error': f'Error setting up webhook: {str(e)}'
+            }
+    
     def test_single_number(self, number: str) -> Dict[str, Any]:
         """Test sending message to a single number via GreenAPI"""
         logger.info(f"\n🧪 Testing GreenAPI with {number}...")

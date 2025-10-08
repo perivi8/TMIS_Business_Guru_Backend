@@ -7,6 +7,18 @@ import sys
 import os
 import traceback
 
+# Add the current directory to the path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from enquiry_routes import handle_incoming_whatsapp
+    print("✅ Successfully imported handle_incoming_whatsapp")
+    print(f"Function: {handle_incoming_whatsapp}")
+    print(f"Function name: {handle_incoming_whatsapp.__name__}")
+except Exception as e:
+    print(f"❌ Failed to import handle_incoming_whatsapp: {e}")
+    traceback.print_exc()
+
 print("=== IMPORT TEST ===")
 print(f"Python version: {sys.version}")
 print(f"Current directory: {os.getcwd()}")
