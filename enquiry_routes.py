@@ -342,7 +342,6 @@ def create_enquiry():
             'secondary_mobile_number': secondary_mobile,  # Use the validated variable
             'gst': gst_for_db,
             'gst_status': data.get('gst_status', ''),
-            'business_type': data.get('business_type'),
             'business_nature': data.get('business_nature'),
             'staff': data.get('staff'),
             'comments': data.get('comments'),
@@ -545,7 +544,6 @@ def create_public_enquiry():
             'wati_name': data['wati_name'],
             'mobile_number': mobile_number,
             'secondary_mobile_number': secondary_mobile,
-            'business_type': data.get('business_type', ''),
             'business_nature': data.get('business_nature', ''),
             'gst': gst_value,
             'gst_status': gst_status_value,
@@ -754,7 +752,7 @@ def update_enquiry(enquiry_id):
         updatable_fields = [
             'date', 'wati_name', 'legal_name', 'user_name', 'mobile_number', 
             'secondary_mobile_number', 'gst', 'gst_status', 
-            'business_type', 'business_nature', 'staff', 'comments', 'additional_comments'
+            'business_nature', 'staff', 'comments', 'additional_comments'
         ]
         
         for field in updatable_fields:

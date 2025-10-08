@@ -112,6 +112,7 @@ if not MONGODB_URI:
     db = None
     clients_collection = None
     users_collection = None
+    enquiries_collection = None
 else:
     print(f"🔄 Client routes connecting to MongoDB...")
     print(f"MongoDB URI: {MONGODB_URI[:50]}...{MONGODB_URI[-20:]}")  # Hide credentials in logs
@@ -123,6 +124,7 @@ else:
         db.command("ping")
         clients_collection = db.clients
         users_collection = db.users
+        enquiries_collection = db.enquiries  # Add enquiries collection
         print("✅ MongoDB connection successful for client_routes module")
     except Exception as e:
         print(f"❌ MongoDB connection failed for client_routes module: {str(e)}")
@@ -135,6 +137,7 @@ else:
         db = None
         clients_collection = None
         users_collection = None
+        enquiries_collection = None
 
 def upload_to_cloudinary(file, client_id, doc_type):
     """Upload file to Cloudinary cloud storage"""
@@ -451,6 +454,30 @@ def create_client():
         
         # Insert client into database
         result = clients_collection.insert_one(client_data)
+        
+        # Update enquiry with legal name and shortlisted status if enquiry_id is provided
+        if 'enquiry_id' in data and data['enquiry_id'] and enquiries_collection:
+            try:
+                enquiry_id = data['enquiry_id']
+                legal_name = data.get('legal_name', '')
+                
+                if ObjectId.is_valid(enquiry_id):
+                    # Update the enquiry with the legal name and mark as shortlisted
+                    update_fields = {}
+                    if legal_name:
+                        update_fields['legal_name'] = legal_name
+                    
+                    # Mark as shortlisted
+                    update_fields['shortlisted'] = True
+                    update_fields['shortlisted_at'] = datetime.utcnow()
+                    
+                    enquiries_collection.update_one(
+                        {'_id': ObjectId(enquiry_id)},
+                        {'$set': update_fields}
+                    )
+                    print(f"✅ Updated enquiry {enquiry_id} with legal name: {legal_name} and marked as shortlisted")
+            except Exception as e:
+                print(f"⚠️ Failed to update enquiry with legal name and shortlisted status: {str(e)}")
         
         # Send WhatsApp notification for new client
         whatsapp_result = None
