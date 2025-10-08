@@ -1036,6 +1036,17 @@ def get_whatsapp_templates():
         logger.error(f"Error getting WhatsApp templates: {str(e)}")
         return jsonify({'error': f'Failed to get templates: {str(e)}'}), 500
 
+# Add a simple test endpoint to verify the new code is running
+@enquiry_bp.route('/enquiries/whatsapp/webhook/test', methods=['GET'])
+def test_webhook_handler():
+    """Test endpoint to verify the new webhook handler is running"""
+    return jsonify({
+        'status': 'success',
+        'message': 'New webhook handler is running',
+        'version': '2.0',
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
 @enquiry_bp.route('/enquiries/whatsapp/webhook', methods=['POST'])
 def handle_incoming_whatsapp():
     """Handle incoming WhatsApp messages from GreenAPI webhook"""
@@ -1045,77 +1056,61 @@ def handle_incoming_whatsapp():
         
         logger.info(f"📥 Incoming WhatsApp webhook data: {data}")
         
-        # Extract relevant information from the webhook payload
-        # GreenAPI webhook structure
-        if 'message' in data and 'chatId' in data:
-            message_data = data['message']
-            chat_id = data['chatId']
-            
-            # Extract sender information
-            sender_number = chat_id.replace('@c.us', '')  # Remove @c.us suffix
-            message_text = message_data.get('textMessage', {}).get('text', '')
-            
-            # Check if this is the "I am interested" message
-            if "i am interested" in message_text.lower() or "interested" in message_text.lower():
-                # Create a new enquiry record
-                new_enquiry = {
-                    'date': datetime.utcnow(),
-                    'wati_name': f"WhatsApp User ({sender_number})",  # Default name until we get actual name
-                    'mobile_number': sender_number,
-                    'gst': '',
-                    'business_type': '',
-                    'business_nature': '',
-                    'staff': '',
-                    'comments': 'New Enquiry - Interested',
-                    'additional_comments': '',
-                    'whatsapp_status': 'received',
-                    'whatsapp_message_id': message_data.get('idMessage', ''),
-                    'whatsapp_sent': True,
-                    'created_at': datetime.utcnow(),
-                    'updated_at': datetime.utcnow()
-                }
-                
-                # Try to get sender's actual name if available
-                if 'senderName' in data:
-                    new_enquiry['wati_name'] = data['senderName']
-                elif 'contact' in data and 'name' in data['contact']:
-                    new_enquiry['wati_name'] = data['contact']['name']
-                
-                # Insert into database
-                if enquiries_collection is not None:
-                    result = enquiries_collection.insert_one(new_enquiry)
-                    new_enquiry['_id'] = str(result.inserted_id)
-                    
-                    logger.info(f"✅ New enquiry created from WhatsApp message: {new_enquiry['_id']}")
-                    
-                    # Emit socket event to notify frontend
-                    from app import socketio
-                    socketio.emit('new_enquiry', new_enquiry)
-                    
-                    return jsonify({
-                        'success': True,
-                        'message': 'Enquiry created successfully',
-                        'enquiry_id': new_enquiry['_id']
-                    }), 200
-                else:
-                    logger.error("❌ Database not available for enquiry creation")
-                    return jsonify({
-                        'success': False,
-                        'error': 'Database not available'
-                    }), 500
-            else:
-                logger.info(f"📥 Received WhatsApp message but not 'interested' message: {message_text}")
-                return jsonify({
-                    'success': True,
-                    'message': 'Message received but not processed as enquiry'
-                }), 200
-        else:
-            logger.warning(f"⚠️ Unexpected webhook data structure: {data}")
+        # Handle empty data
+        if not data:
+            logger.warning("⚠️ Empty webhook data received")
             return jsonify({
-                'success': False,
-                'error': 'Unexpected data structure'
-            }), 400
-            
+                'success': True,
+                'message': 'Empty data received'
+            }), 200
+        
+        # Check if this is a state change notification or other non-message event (ignore these)
+        webhook_type = data.get('typeWebhook', '')
+        logger.info(f"🔍 Webhook type: '{webhook_type}'")
+        
+        if webhook_type and webhook_type != 'incomingMessageReceived':
+            logger.info(f"ℹ️ Non-message webhook event received: {webhook_type}")
+            return jsonify({
+                'success': True,
+                'message': f'Webhook event {webhook_type} received and ignored'
+            }), 200
+        
+        # Extract message information from various possible formats
+        message_info = _extract_message_info(data)
+        logger.info(f"📦 Extracted message info: {message_info}")
+        
+        # If we couldn't extract message info, it might be a non-message event
+        if not message_info.get('has_message_data'):
+            logger.info("ℹ️ No message data found in webhook, ignoring")
+            return jsonify({
+                'success': True,
+                'message': 'No message data found'
+            }), 200
+        
+        chat_id = message_info.get('chat_id', '')
+        message_text = message_info.get('message_text', '')
+        sender_name = message_info.get('sender_name', '')
+        message_id = message_info.get('message_id', '')
+        
+        # Check if we have the minimum required data
+        if not message_text:
+            logger.info("ℹ️ No message text found, ignoring")
+            return jsonify({
+                'success': True,
+                'message': 'No message text found'
+            }), 200
+        
+        # Check if this is the "I am interested" message
+        if _is_interested_message(message_text):
+            logger.info(f"✅ Processing interested message from {sender_name or chat_id}: {message_text}")
+            return _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
+        else:
+            logger.info(f"📥 Received WhatsApp message but not 'interested' message: {message_text}")
+            return jsonify({
+                'success': True,
+                'message': 'Message received but not processed as enquiry'
+            }), 200
+        
     except Exception as e:
         logger.error(f"❌ Error handling incoming WhatsApp message: {str(e)}")
         import traceback
@@ -1123,6 +1118,150 @@ def handle_incoming_whatsapp():
         return jsonify({
             'success': False,
             'error': f'Error processing webhook: {str(e)}'
+        }), 500
+
+def _extract_message_info(data):
+    """Extract message information from various GreenAPI webhook formats"""
+    result = {
+        'has_message_data': False,
+        'chat_id': '',
+        'message_text': '',
+        'sender_name': '',
+        'message_id': ''
+    }
+    
+    try:
+        # Format 1: Direct message format (original)
+        if 'message' in data and 'chatId' in data and not data.get('typeWebhook'):
+            message_data = data['message']
+            result['chat_id'] = data['chatId']
+            result['sender_name'] = data.get('senderName', '')
+            result['message_text'] = message_data.get('textMessage', {}).get('text', '')
+            result['message_id'] = message_data.get('idMessage', '')
+            result['has_message_data'] = True
+            
+        # Format 2: Incoming message received format with messageData
+        elif data.get('typeWebhook') == 'incomingMessageReceived' and 'messageData' in data:
+            message_data = data.get('messageData', {})
+            if 'message' in message_data:
+                msg = message_data['message']
+                result['message_text'] = msg.get('textMessage', {}).get('text', '')
+                result['chat_id'] = message_data.get('sender', '')
+                result['sender_name'] = message_data.get('senderName', '')
+                result['message_id'] = msg.get('idMessage', '')
+                result['has_message_data'] = True
+                
+        # Format 3: Incoming message received format with direct message
+        elif data.get('typeWebhook') == 'incomingMessageReceived' and 'message' in data:
+            msg = data['message']
+            result['message_text'] = msg.get('textMessage', {}).get('text', '')
+            # Get sender info from senderData
+            sender_data = data.get('senderData', {})
+            result['chat_id'] = sender_data.get('chatId', '')
+            result['sender_name'] = sender_data.get('senderName', '')
+            result['message_id'] = msg.get('idMessage') or msg.get('id', '')
+            result['has_message_data'] = True
+            
+        # Format 4: State change or other notifications (no message data)
+        elif data.get('typeWebhook') and 'message' not in data:
+            # This is likely a state change or other notification, not a message
+            result['has_message_data'] = False
+            
+    except Exception as e:
+        logger.error(f"Error extracting message info: {str(e)}")
+    
+    return result
+
+def _is_interested_message(message_text):
+    """Check if the message indicates interest"""
+    if not message_text:
+        return False
+    text_lower = message_text.lower()
+    return "i am interested" in text_lower or "interested" in text_lower or "i'm interested" in text_lower
+
+def _process_incoming_message(data):
+    """Process incoming message data"""
+    try:
+        message_data = data['message']
+        chat_id = data['chatId']
+        
+        # Extract sender information
+        sender_number = chat_id.replace('@c.us', '')  # Remove @c.us suffix
+        message_text = message_data.get('textMessage', {}).get('text', '')
+        
+        # Check if this is the "I am interested" message
+        if _is_interested_message(message_text):
+            return _create_enquiry_from_message(chat_id, message_text, data.get('senderName', ''), message_data.get('idMessage', ''))
+        else:
+            logger.info(f"📥 Received WhatsApp message but not 'interested' message: {message_text}")
+            return jsonify({
+                'success': True,
+                'message': 'Message received but not processed as enquiry'
+            }), 200
+            
+    except Exception as e:
+        logger.error(f"❌ Error processing message data: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Error processing message: {str(e)}'
+        }), 500
+
+def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id):
+    """Create enquiry record from message data"""
+    try:
+        # Extract sender information
+        sender_number = chat_id.replace('@c.us', '')  # Remove @c.us suffix
+        
+        # Create a new enquiry record
+        new_enquiry = {
+            'date': datetime.utcnow(),
+            'wati_name': f"WhatsApp User ({sender_number})",  # Default name until we get actual name
+            'mobile_number': sender_number,
+            'gst': '',
+            'business_type': '',
+            'business_nature': '',
+            'staff': '',
+            'comments': 'New Enquiry - Interested',
+            'additional_comments': '',
+            'whatsapp_status': 'received',
+            'whatsapp_message_id': message_id,
+            'whatsapp_sent': True,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        # Try to get sender's actual name if available
+        if sender_name:
+            new_enquiry['wati_name'] = sender_name
+        
+        # Insert into database
+        if enquiries_collection is not None:
+            result = enquiries_collection.insert_one(new_enquiry)
+            new_enquiry['_id'] = str(result.inserted_id)
+            
+            logger.info(f"✅ New enquiry created from WhatsApp message: {new_enquiry['_id']}")
+            
+            # Emit socket event to notify frontend
+            from app import socketio
+            socketio.emit('new_enquiry', new_enquiry)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Enquiry created successfully',
+                'enquiry_id': new_enquiry['_id']
+            }), 200
+        else:
+            logger.error("❌ Database not available for enquiry creation")
+            return jsonify({
+                'success': False,
+                'error': 'Database not available'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ Error creating enquiry: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Error creating enquiry: {str(e)}'
         }), 500
 
 @enquiry_bp.route('/whatsapp/public-send', methods=['POST'])
