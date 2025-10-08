@@ -804,14 +804,17 @@ def update_enquiry(enquiry_id):
                 primary_mobile = existing_enquiry.get('mobile_number')
                 if primary_mobile:
                     # Update client record with matching primary mobile number
-                    client_result = clients_collection.update_one(
-                        {'mobile_number': primary_mobile},
-                        {'$set': {'optional_mobile_number': new_secondary_mobile}}
-                    )
-                    if client_result.matched_count > 0:
-                        logger.info(f"🔄 Synced secondary_mobile_number to client record for mobile: {primary_mobile}")
-                    else:
-                        logger.warning(f"⚠️ No matching client found for mobile: {primary_mobile}")
+                    try:
+                        client_result = clients_collection.update_one(
+                            {'mobile_number': primary_mobile},
+                            {'$set': {'optional_mobile_number': new_secondary_mobile}}
+                        )
+                        if client_result.matched_count > 0:
+                            logger.info(f"🔄 Synced secondary_mobile_number to client record for mobile: {primary_mobile}")
+                        else:
+                            logger.warning(f"⚠️ No matching client found for mobile: {primary_mobile}")
+                    except Exception as sync_error:
+                        logger.error(f"Error syncing secondary_mobile_number to client: {str(sync_error)}")
         
         if result.modified_count == 0:
             return jsonify({'error': 'No changes made'}), 400
