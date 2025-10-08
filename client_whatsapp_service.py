@@ -148,8 +148,16 @@ Thank you!"""
             # Send message
             result = self.whatsapp_service.send_message(formatted_number, message)
             
+            # Ensure result is always a dictionary to prevent "Collection objects do not implement truth value testing" error
+            if not isinstance(result, dict):
+                result = {
+                    'success': False,
+                    'error': 'Invalid result format from WhatsApp service',
+                    'raw_result_type': str(type(result))
+                }
+            
             # Log the activity
-            if result['success']:
+            if result.get('success', False):
                 logger.info(f"Sent new client message to {legal_name} at {mobile_number}")
             else:
                 logger.error(f"Failed to send new client message to {mobile_number}: {result.get('error')}")
@@ -179,6 +187,7 @@ Thank you!"""
         results = []
         
         if not self.api_available:
+            # Ensure we return a proper list with dict elements
             return [{'success': False, 'error': 'WhatsApp service not available'}]
         
         try:
@@ -209,6 +218,9 @@ Your mail was update successfully from ({old_email} to {new_email}).
 
 Thank you for keeping your information up to date with us!"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
                 elif new_email and (not old_email or old_email != new_email):
                     message = f"""Hii {legal_name} sir/madam, 
@@ -217,6 +229,9 @@ Your New mail ({new_email}) was update successfully .
 
 Thank you !"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
             
             # Check for company_email updates
@@ -231,6 +246,9 @@ Your mail was update successfully from ({old_email} to {new_email}).
 
 Thank you for keeping your information up to date with us!"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
                 elif new_email and (not old_email or old_email != new_email):
                     message = f"""Hii {legal_name} sir/madam, 
@@ -239,6 +257,9 @@ Your New mail ({new_email}) was update successfully .
 
 Thank you !"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
             
             # Check for optional mobile number updates
@@ -254,6 +275,9 @@ Your alternate mobile number ({optional_mobile}) was added successfully .
 
 Thank you for keeping your information up to date with us!"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
             
             # Check for website updates
@@ -268,6 +292,9 @@ Your website was update successfully from ({old_website} to {new_website}).
 
 Thank you !"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
                 elif new_website and (not old_website or old_website != new_website):
                     message = f"""Hii {legal_name} sir/madam, 
@@ -276,6 +303,9 @@ Your New Website ({new_website}) was created successfully .
 
 Thank you !"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
             
             # Check for new current account
@@ -395,6 +425,9 @@ If you have any queries, please reach us.
 
 Thank you!"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
                 
                 # Send rejection messages
@@ -410,6 +443,9 @@ If you have any queries, please reach us.
 
 Thank you!"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
                 
                 # Send general payment gateway update message when gateways are added but not yet approved/rejected
@@ -431,6 +467,9 @@ If any queries please reach us.
 
 Thank you!"""
                         result = self.whatsapp_service.send_message(formatted_number, message)
+                        # Ensure result is a dictionary, not a MongoDB collection
+                        if not isinstance(result, dict):
+                            result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                         results.append(result)
             
             # Also check for payment gateways being added without status changes
@@ -453,9 +492,20 @@ If any queries please reach us.
 
 Thank you!"""
                     result = self.whatsapp_service.send_message(formatted_number, message)
+                    # Ensure result is a dictionary, not a MongoDB collection
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'error': 'Invalid result format from WhatsApp service'}
                     results.append(result)
             
-            return results
+            # Ensure all results are dictionaries
+            validated_results = []
+            for result in results:
+                if not isinstance(result, dict):
+                    validated_results.append({'success': False, 'error': 'Invalid result format from WhatsApp service'})
+                else:
+                    validated_results.append(result)
+            
+            return validated_results
             
         except Exception as e:
             logger.error(f"Error in send_multiple_client_update_messages: {str(e)}")
@@ -739,8 +789,16 @@ Thank you for keeping your information up to date with us!"""
             # Send message
             result = self.whatsapp_service.send_message(formatted_number, message)
             
+            # Ensure result is always a dictionary to prevent "Collection objects do not implement truth value testing" error
+            if not isinstance(result, dict):
+                result = {
+                    'success': False,
+                    'error': 'Invalid result format from WhatsApp service',
+                    'raw_result_type': str(type(result))
+                }
+            
             # Log the activity
-            if result['success']:
+            if result.get('success', False):
                 logger.info(f"Sent client update message ({update_type}) to {legal_name} at {mobile_number}")
             else:
                 logger.error(f"Failed to send client update message to {mobile_number}: {result.get('error')}")
@@ -805,8 +863,16 @@ Thank you!"""
             # Send message
             result = self.whatsapp_service.send_message(formatted_number, message)
             
+            # Ensure result is always a dictionary to prevent "Collection objects do not implement truth value testing" error
+            if not isinstance(result, dict):
+                result = {
+                    'success': False,
+                    'error': 'Invalid result format from WhatsApp service',
+                    'raw_result_type': str(type(result))
+                }
+            
             # Log the activity
-            if result['success']:
+            if result.get('success', False):
                 logger.info(f"Sent loan approved message to {legal_name} at {mobile_number}")
             else:
                 logger.error(f"Failed to send loan approved message to {mobile_number}: {result.get('error')}")

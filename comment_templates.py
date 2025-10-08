@@ -100,8 +100,16 @@ class CommentTemplatesService:
             # Send message
             result = whatsapp_service.whatsapp_service.send_message(formatted_number, message)
             
+            # Ensure result is always a dictionary to prevent "Collection objects do not implement truth value testing" error
+            if not isinstance(result, dict):
+                result = {
+                    'success': False,
+                    'error': 'Invalid result format from WhatsApp service',
+                    'raw_result_type': str(type(result))
+                }
+            
             # Log the activity
-            if result['success']:
+            if result.get('success', False):
                 logger.info(f"Sent comment notification for '{comment}' to {legal_name} at {mobile_number}")
             else:
                 logger.error(f"Failed to send comment notification for '{comment}' to {mobile_number}: {result.get('error')}")

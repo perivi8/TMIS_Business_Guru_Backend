@@ -504,10 +504,14 @@ def create_client():
         }
         
         # Add WhatsApp result to response if attempted
-        if whatsapp_result is not None:
-            response_data['whatsapp_sent'] = whatsapp_result['success']
-            if not whatsapp_result['success']:
+        # Fix: Ensure whatsapp_result is a dict to prevent "Collection objects do not implement truth value testing" error
+        if whatsapp_result is not None and isinstance(whatsapp_result, dict):
+            response_data['whatsapp_sent'] = whatsapp_result.get('success', False)
+            if not whatsapp_result.get('success', True):
                 response_data['whatsapp_error'] = whatsapp_result.get('error', 'Unknown error')
+        elif whatsapp_result is not None:
+            # Handle case where whatsapp_result might be a list or other type
+            response_data['whatsapp_error'] = 'Unexpected WhatsApp result format'
         
         return jsonify(response_data), 201
         
@@ -850,7 +854,7 @@ def update_client(client_id):
             
             # Add specific WhatsApp status to response for frontend feedback
             # Fix: Ensure whatsapp_result is a dict to prevent "Collection objects do not implement truth value testing" error
-            if whatsapp_result and isinstance(whatsapp_result, dict):
+            if whatsapp_result is not None and isinstance(whatsapp_result, dict):
                 if whatsapp_result.get('success', False):
                     response_data['whatsapp_sent'] = True
                 else:
@@ -862,8 +866,12 @@ def update_client(client_id):
                         response_data['whatsapp_quota_exceeded'] = True
                     else:
                         response_data['whatsapp_error'] = whatsapp_result.get('error', 'Failed to send WhatsApp message')
+            elif whatsapp_result is not None:
+                # Handle case where whatsapp_result might be a MongoDB collection or other unexpected type
+                response_data['whatsapp_error'] = f'Unexpected WhatsApp result format: {type(whatsapp_result).__name__}'
+                logger.error(f"WhatsApp service returned unexpected type: {type(whatsapp_result)} - {whatsapp_result}")
             else:
-                # Indicate that a WhatsApp notification was attempted
+                # Indicate that a WhatsApp notification was attempted but no result was returned
                 response_data['whatsapp_notification'] = 'attempted'
         
         # Send notifications asynchronously to avoid blocking the response
@@ -1458,6 +1466,7 @@ def update_client_details(client_id):
                 print(f"Error sending WhatsApp notification: {str(e)}")
                 import traceback
                 traceback.print_exc()
+                # Ensure whatsapp_results is always a list even in error cases
                 whatsapp_results = [{'success': False, 'error': str(e)}]
         
         print(f"✅ Client update completed successfully")
@@ -1469,29 +1478,51 @@ def update_client_details(client_id):
         }
         
         # Add WhatsApp results to response if attempted
-        # Fix: Ensure whatsapp_results is a list to prevent "Collection objects do not implement truth value testing" error
-        if whatsapp_results and isinstance(whatsapp_results, list) and len(whatsapp_results) > 0:
-            # Check if any message was sent successfully
-            success_count = sum(1 for result in whatsapp_results if result.get('success', False))
-            response_data['whatsapp_sent'] = success_count > 0
+        # Fix: Ensure whatsapp_results is always a list to prevent "Collection objects do not implement truth value testing" error
+        # Additional safety check to ensure whatsapp_results is always a list
+        success_count = 0  # Initialize success_count to prevent undefined variable error
+        if whatsapp_results is not None:
+            # If whatsapp_results is not a list, convert it to a list
+            if not isinstance(whatsapp_results, list):
+                # Handle case where whatsapp_results might be a MongoDB collection or other unexpected type
+                if hasattr(whatsapp_results, '__iter__') and not isinstance(whatsapp_results, (str, bytes)):
+                    # Convert iterable to list
+                    try:
+                        whatsapp_results = list(whatsapp_results)
+                    except Exception:
+                        # If conversion fails, wrap in list
+                        whatsapp_results = [whatsapp_results] if whatsapp_results is not None else []
+                else:
+                    # Wrap single object in list
+                    whatsapp_results = [whatsapp_results] if whatsapp_results is not None else []
             
-            # Check for quota exceeded errors
+            # Now check if it's a list and has content
+            if isinstance(whatsapp_results, list) and len(whatsapp_results) > 0:
+                # Check if any message was sent successfully
+                success_count = sum(1 for result in whatsapp_results if isinstance(result, dict) and result.get('success', False))
+                response_data['whatsapp_sent'] = success_count > 0
+            
+            # Check for quota exceeded errors - only if whatsapp_results is a list
             quota_exceeded = False
-            for result in whatsapp_results:
-                if not result.get('success', True):
-                    error_msg = result.get('error', '').lower()
-                    if ('quota exceeded' in error_msg or 
-                        'monthly quota has been exceeded' in error_msg or
-                        result.get('status_code') == 466):
-                        quota_exceeded = True
-                        break
+            if isinstance(whatsapp_results, list):
+                for result in whatsapp_results:
+                    # Ensure result is a dict before accessing its properties
+                    if isinstance(result, dict) and not result.get('success', True):
+                        error_msg = result.get('error', '').lower()
+                        if ('quota exceeded' in error_msg or 
+                            'monthly quota has been exceeded' in error_msg or
+                            result.get('status_code') == 466):
+                            quota_exceeded = True
+                            break
             
             response_data['whatsapp_quota_exceeded'] = quota_exceeded
             
-            if success_count < len(whatsapp_results):
+            # Only process failures if whatsapp_results is a list
+            if isinstance(whatsapp_results, list) and success_count < len(whatsapp_results):
                 # If some failed, include error from first failure
                 for result in whatsapp_results:
-                    if not result.get('success', True):
+                    # Ensure result is a dict before accessing its properties
+                    if isinstance(result, dict) and not result.get('success', True):
                         response_data['whatsapp_error'] = result.get('error', 'Some messages failed to send')
                         break
         

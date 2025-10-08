@@ -14,15 +14,19 @@ load_dotenv()
 def test_greenapi():
     """Test GreenAPI directly with your credentials"""
     
-    instance_id = os.getenv('CHATAPI_INSTANCE_ID')  # 7105335459
-    token = os.getenv('CHATAPI_TOKEN')  # 3a0876a6822049bc...
+    instance_id = os.getenv('GREENAPI_INSTANCE_ID')  # 7105335459
+    token = os.getenv('GREENAPI_TOKEN')  # 3a0876a6822049bc...
     
     print("🧪 Direct GreenAPI Test")
     print("=" * 40)
     print(f"Instance ID: {instance_id}")
-    print(f"Token: {token[:20]}...")
+    print(f"Token: {token[:20] if token else 'None'}...")
     
-    base_url = f"https://{instance_id}.api.greenapi.com"
+    if not instance_id or not token:
+        print("❌ Missing GreenAPI credentials")
+        return
+    
+    base_url = "https://api.green-api.com"
     print(f"Base URL: {base_url}")
     
     # Test 1: Check instance state
@@ -43,7 +47,6 @@ def test_greenapi():
                 print(f"✅ Instance is AUTHORIZED - ready to send messages!")
                 
                 # Test 2: Send test message
-                print(f"\n📤 Testing message sending...")
                 send_test_message(base_url, instance_id, token)
                 
             else:
