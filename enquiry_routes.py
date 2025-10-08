@@ -70,6 +70,7 @@ try:
     # Create collections
     enquiries_collection = db.enquiries
     users_collection = db.users
+    clients_collection = db.clients
     
     # Create indexes for better performance
     try:
@@ -89,6 +90,7 @@ except Exception as e:
     db = None
     enquiries_collection = None
     users_collection = None
+    clients_collection = None
 
 def serialize_enquiry(enquiry):
     """Convert MongoDB document to JSON serializable format"""
@@ -795,16 +797,16 @@ def update_enquiry(enquiry_id):
         
         # NEW: Sync secondary_mobile_number to client records when updated
         # Check if secondary_mobile_number was updated and sync to corresponding client
-        if 'secondary_mobile_number' in update_doc and clients_collection:
-            new_secondary_mobile = update_doc.get('secondary_mobile_number')
-            old_secondary_mobile = existing_enquiry.get('secondary_mobile_number') if existing_enquiry else None
-            
-            # Only sync if the secondary mobile number actually changed
-            if new_secondary_mobile != old_secondary_mobile:
-                primary_mobile = existing_enquiry.get('mobile_number')
-                if primary_mobile:
-                    # Update client record with matching primary mobile number
-                    try:
+        if 'secondary_mobile_number' in update_doc and clients_collection is not None:
+            try:
+                new_secondary_mobile = update_doc.get('secondary_mobile_number')
+                old_secondary_mobile = existing_enquiry.get('secondary_mobile_number') if existing_enquiry else None
+                
+                # Only sync if the secondary mobile number actually changed
+                if new_secondary_mobile != old_secondary_mobile:
+                    primary_mobile = existing_enquiry.get('mobile_number')
+                    if primary_mobile:
+                        # Update client record with matching primary mobile number
                         client_result = clients_collection.update_one(
                             {'mobile_number': primary_mobile},
                             {'$set': {'optional_mobile_number': new_secondary_mobile}}
@@ -813,8 +815,9 @@ def update_enquiry(enquiry_id):
                             logger.info(f"🔄 Synced secondary_mobile_number to client record for mobile: {primary_mobile}")
                         else:
                             logger.warning(f"⚠️ No matching client found for mobile: {primary_mobile}")
-                    except Exception as sync_error:
-                        logger.error(f"Error syncing secondary_mobile_number to client: {str(sync_error)}")
+            except Exception as sync_error:
+                logger.error(f"Error syncing secondary_mobile_number to client: {str(sync_error)}")
+                # Don't fail the entire update if client sync fails
         
         if result.modified_count == 0:
             return jsonify({'error': 'No changes made'}), 400
