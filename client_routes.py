@@ -1359,6 +1359,26 @@ def update_client_details(client_id):
                 # Get updated client data
                 updated_client = clients_collection.find_one({'_id': ObjectId(client_id)})
                 
+                # NEW: Sync optional_mobile_number to enquiry records
+                # Check if optional_mobile_number was updated
+                if 'optional_mobile_number' in update_data and enquiries_collection:
+                    new_optional_mobile = update_data.get('optional_mobile_number')
+                    old_optional_mobile = old_client.get('optional_mobile_number') if old_client else None
+                    
+                    # Only sync if the optional mobile number actually changed
+                    if new_optional_mobile != old_optional_mobile:
+                        primary_mobile = updated_client.get('mobile_number')
+                        if primary_mobile:
+                            # Update enquiry record with matching primary mobile number
+                            enquiry_result = enquiries_collection.update_one(
+                                {'mobile_number': primary_mobile},
+                                {'$set': {'secondary_mobile_number': new_optional_mobile}}
+                            )
+                            if enquiry_result.matched_count > 0:
+                                print(f"🔄 Synced optional_mobile_number to enquiry record for mobile: {primary_mobile}")
+                            else:
+                                print(f"⚠️ No matching enquiry found for mobile: {primary_mobile}")
+                
                 # Send multiple WhatsApp messages for all changes
                 updated_fields = list(update_data.keys())
                 
