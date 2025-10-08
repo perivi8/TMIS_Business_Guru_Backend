@@ -1732,15 +1732,6 @@ try:
     print("✅ Enquiry routes registered successfully")
 except Exception as e:
     print(f"❌ Error importing enquiry routes: {e}")
-
-# Register Chatbot Routes
-try:
-    print("🔄 Importing chatbot routes...")
-    from chatbot_routes import chatbot_bp
-    app.register_blueprint(chatbot_bp)
-    print("✅ Chatbot routes registered successfully")
-except Exception as e:
-    print(f"❌ Error importing chatbot routes: {e}")
     
     # Create a simple fallback enquiry endpoint
     @app.route('/api/enquiries', methods=['GET'])
