@@ -1661,6 +1661,70 @@ def extract_gst_data_direct():
         print(f"❌ Error in direct GST data extraction: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@client_bp.route('/clients/extract-gst-data', methods=['POST'])
+@jwt_required()
+def extract_gst_data_direct():
+    """Extract data from GST document directly without creating a client"""
+    try:
+        print(f"=== DIRECT GST DATA EXTRACTION REQUEST ===")
+        
+        # Check if DocumentProcessor is available
+        if not DOCUMENT_PROCESSOR_AVAILABLE or DocumentProcessor is None:
+            return jsonify({'error': 'Document processing service not available'}), 503
+        
+        # Check if file was uploaded
+        if 'gst_document' not in request.files:
+            return jsonify({'error': 'No GST document uploaded'}), 400
+        
+        file = request.files['gst_document']
+        if not file or not file.filename:
+            return jsonify({'error': 'Invalid GST document'}), 400
+        
+        # Create temporary file for processing
+        import tempfile
+        import os
+        
+        # Save uploaded file to temporary location
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1])
+        file.save(temp_file.name)
+        temp_file.close()
+        
+        gst_file_path = temp_file.name
+        print(f"💾 Saved uploaded GST document to temporary file: {gst_file_path}")
+        
+        # Process the GST document
+        try:
+            document_processor = DocumentProcessor()
+            extracted_data = document_processor.extract_gst_info(gst_file_path)
+            print(f"✅ Extracted GST data: {extracted_data}")
+            
+            # Clean up temporary file
+            try:
+                os.unlink(gst_file_path)
+                print(f"🧹 Cleaned up temporary file: {gst_file_path}")
+            except Exception as e:
+                print(f"⚠️ Failed to clean up temporary file: {e}")
+            
+            return jsonify({
+                'success': True,
+                'extracted_data': extracted_data
+            }), 200
+            
+        except Exception as e:
+            # Clean up temporary file
+            try:
+                os.unlink(gst_file_path)
+                print(f"🧹 Cleaned up temporary file after error: {gst_file_path}")
+            except Exception as cleanup_error:
+                print(f"⚠️ Failed to clean up temporary file after error: {cleanup_error}")
+            
+            print(f"❌ Error processing GST document: {str(e)}")
+            return jsonify({'error': f'Failed to process GST document: {str(e)}'}), 500
+        
+    except Exception as e:
+        print(f"❌ Error in direct GST data extraction: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @client_bp.route('/clients/<client_id>/extract-gst-data', methods=['POST'])
 @jwt_required()
 def extract_gst_data(client_id):
