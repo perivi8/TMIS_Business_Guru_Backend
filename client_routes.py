@@ -1380,20 +1380,51 @@ def update_client_details(client_id):
                                 print(f"⚠️ No matching enquiry found for mobile: {primary_mobile}")
                 
                 # Send multiple WhatsApp messages for all changes
-                updated_fields = list(update_data.keys())
-                
-                # Special handling for IE Code document uploads
-                # Check if IE Code document was uploaded in this update
-                if 'documents' in update_data:
-                    current_documents = update_data.get('documents', {})
-                    old_documents = old_client.get('documents', {}) if old_client else {}
+                # Track only the fields that actually changed
+                updated_fields = []
+                for field, new_value in update_data.items():
+                    # Skip timestamp and user tracking fields
+                    if field in ['updated_at', 'updated_by']:
+                        continue
                     
-                    # If IE Code document is new, add it to updated_fields
-                    if ('ie_code_document' in current_documents and current_documents['ie_code_document'] and
-                        ('ie_code_document' not in old_documents or not old_documents['ie_code_document'])):
-                        if 'ie_code' not in updated_fields:
-                            updated_fields.append('ie_code')
-                        print(f"IE Code document detected as newly uploaded for client {client_id}")
+                    # For other fields, check if they actually changed
+                    old_value = old_client.get(field) if old_client else None
+                    
+                    # Special handling for payment_gateways_status
+                    if field == 'payment_gateways_status' and old_client:
+                        old_value = old_client.get('payment_gateways_status', {})
+                        # Compare dictionaries properly
+                        if new_value != old_value:
+                            updated_fields.append(field)
+                    # Special handling for payment_gateways
+                    elif field == 'payment_gateways' and old_client:
+                        old_value = old_client.get('payment_gateways', [])
+                        # Compare lists properly
+                        if set(new_value) != set(old_value):
+                            updated_fields.append(field)
+                    # Special handling for documents
+                    elif field == 'documents' and old_client:
+                        old_documents = old_client.get('documents', {})
+                        new_documents = new_value
+                        
+                        # Check if any document was added or changed
+                        document_changed = False
+                        for doc_key, doc_value in new_documents.items():
+                            if doc_key not in old_documents or old_documents[doc_key] != doc_value:
+                                document_changed = True
+                                # If IE Code document was added, also add 'ie_code' to updated_fields
+                                if doc_key == 'ie_code_document' and doc_value:
+                                    if 'ie_code' not in updated_fields:
+                                        updated_fields.append('ie_code')
+                                break
+                        
+                        if document_changed:
+                            updated_fields.append('documents')
+                    # For all other fields
+                    elif new_value != old_value:
+                        updated_fields.append(field)
+                
+                print(f"Fields that actually changed: {updated_fields}")
                 
                 # Pass old payment gateways status for comparison
                 if old_client and 'payment_gateways_status' in update_data:
@@ -1404,6 +1435,8 @@ def update_client_details(client_id):
                 print(f"WhatsApp notification results: {whatsapp_results}")
             except Exception as e:
                 print(f"Error sending WhatsApp notification: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 whatsapp_results = [{'success': False, 'error': str(e)}]
         
         print(f"✅ Client update completed successfully")

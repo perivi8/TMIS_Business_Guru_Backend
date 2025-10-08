@@ -319,8 +319,10 @@ Thank you!"""
             # Only check once for IE document uploads to prevent duplicate messages
             ie_document_uploaded = False
             
-            # Check if IE Code document was uploaded (either through 'ie_code' field or 'documents' field)
-            if ('ie_code' in updated_fields or 'documents' in updated_fields) and not ie_document_uploaded:
+            # Check specifically for IE Code document uploads
+            # Only check if 'ie_code' field was actually updated or if IE Code document was uploaded
+            if ('ie_code' in updated_fields or 
+                ('documents' in updated_fields and 'ie_code_document' in [doc_key for doc_key in client_data.get('documents', {}).keys()])):
                 documents = client_data.get('documents', {})
                 old_documents = old_client_data.get('documents', {}) if old_client_data else {}
                 
