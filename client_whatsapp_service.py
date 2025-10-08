@@ -342,6 +342,22 @@ Thank you! For further any update we will update you."""
                 else:
                     logger.info(f"No new IE Code document uploaded or already existed, not sending notification for {legal_name}")
             
+            # Check for IE Code field updates (when IE Code is added/changed in form fields)
+            elif 'ie_code' in updated_fields:
+                new_ie_code = client_data.get('ie_code', '')
+                old_ie_code = old_client_data.get('ie_code', '') if old_client_data else ''
+                
+                # Send message when IE Code is added or changed (and not empty)
+                if new_ie_code and new_ie_code != old_ie_code:
+                    message = f"""Hii {legal_name} sir/madam, 
+
+Your IE Code ({new_ie_code}) has been successfully updated. 
+
+Thank you! For further any update we will update you."""
+                    result = self.whatsapp_service.send_message(formatted_number, message)
+                    results.append(result)
+                    logger.info(f"IE Code field updated successfully, notification sent for {legal_name}")
+            
             # Check for payment gateway status updates
             if 'payment_gateways_status' in updated_fields:
                 payment_gateways_status = client_data.get('payment_gateways_status', {})

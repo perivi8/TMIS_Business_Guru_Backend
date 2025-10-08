@@ -256,8 +256,8 @@ def get_database_status():
         
         # Get collection stats
         collections = db.list_collection_names()
-        client_count = clients_collection.count_documents({}) if clients_collection else 0
-        user_count = users_collection.count_documents({}) if users_collection else 0
+        client_count = clients_collection.count_documents({}) if clients_collection is not None else 0
+        user_count = users_collection.count_documents({}) if users_collection is not None else 0
         
         return {
             'status': 'connected',
@@ -471,11 +471,19 @@ def create_client():
                     update_fields['shortlisted'] = True
                     update_fields['shortlisted_at'] = datetime.utcnow()
                     
-                    enquiries_collection.update_one(
+                    # Also sync optional_mobile_number to secondary_mobile_number in enquiry
+                    optional_mobile = data.get('optional_mobile_number', '')
+                    if optional_mobile:
+                        update_fields['secondary_mobile_number'] = optional_mobile
+                    
+                    result = enquiries_collection.update_one(
                         {'_id': ObjectId(enquiry_id)},
                         {'$set': update_fields}
                     )
-                    print(f"✅ Updated enquiry {enquiry_id} with legal name: {legal_name} and marked as shortlisted")
+                    if result.matched_count > 0:
+                        print(f"✅ Updated enquiry {enquiry_id} with legal name: {legal_name}, marked as shortlisted, and synced mobile numbers")
+                    else:
+                        print(f"⚠️ No matching enquiry found for ID: {enquiry_id}")
             except Exception as e:
                 print(f"⚠️ Failed to update enquiry with legal name and shortlisted status: {str(e)}")
         
@@ -841,7 +849,8 @@ def update_client(client_id):
                     whatsapp_result = {'success': False, 'error': str(e)}
             
             # Add specific WhatsApp status to response for frontend feedback
-            if whatsapp_result:
+            # Fix: Ensure whatsapp_result is a dict to prevent "Collection objects do not implement truth value testing" error
+            if whatsapp_result and isinstance(whatsapp_result, dict):
                 if whatsapp_result.get('success', False):
                     response_data['whatsapp_sent'] = True
                 else:
@@ -1420,19 +1429,31 @@ def update_client_details(client_id):
                         
                         if document_changed:
                             updated_fields.append('documents')
+                    # Special handling for IE Code field
+                    elif field == 'ie_code' and old_client:
+                        old_ie_code = old_client.get('ie_code', '')
+                        if new_value != old_ie_code:
+                            updated_fields.append(field)
                     # For all other fields
                     elif new_value != old_value:
                         updated_fields.append(field)
                 
-                print(f"Fields that actually changed: {updated_fields}")
+                print(f"📱 Fields that actually changed: {updated_fields}")
+                print(f"📱 WhatsApp service available: {WHATSAPP_SERVICE_AVAILABLE}")
+                print(f"📱 Client WhatsApp service: {client_whatsapp_service is not None}")
                 
-                # Pass old payment gateways status for comparison
-                if old_client and 'payment_gateways_status' in update_data:
-                    old_client['old_payment_gateways_status'] = old_client.get('payment_gateways_status', {})
-                whatsapp_results = client_whatsapp_service.send_multiple_client_update_messages(
-                    updated_client, updated_fields, old_client)
-                    
-                print(f"WhatsApp notification results: {whatsapp_results}")
+                if updated_fields:
+                    print(f"📱 Sending WhatsApp notifications for {len(updated_fields)} changed fields...")
+                    # Pass old payment gateways status for comparison
+                    if old_client and 'payment_gateways_status' in update_data:
+                        old_client['old_payment_gateways_status'] = old_client.get('payment_gateways_status', {})
+                    whatsapp_results = client_whatsapp_service.send_multiple_client_update_messages(
+                        updated_client, updated_fields, old_client)
+                        
+                    print(f"📱 WhatsApp notification results: {whatsapp_results}")
+                else:
+                    print(f"📱 No fields changed, skipping WhatsApp notifications")
+                    whatsapp_results = []
             except Exception as e:
                 print(f"Error sending WhatsApp notification: {str(e)}")
                 import traceback
@@ -1448,7 +1469,8 @@ def update_client_details(client_id):
         }
         
         # Add WhatsApp results to response if attempted
-        if whatsapp_results:
+        # Fix: Ensure whatsapp_results is a list to prevent "Collection objects do not implement truth value testing" error
+        if whatsapp_results and isinstance(whatsapp_results, list) and len(whatsapp_results) > 0:
             # Check if any message was sent successfully
             success_count = sum(1 for result in whatsapp_results if result.get('success', False))
             response_data['whatsapp_sent'] = success_count > 0
