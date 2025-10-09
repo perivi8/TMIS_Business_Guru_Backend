@@ -1119,17 +1119,39 @@ def test_webhook_with_data():
             'timestamp': datetime.utcnow().isoformat()
         }), 500
 
-@enquiry_bp.route('/enquiries/whatsapp/webhook', methods=['POST'])
+@enquiry_bp.route('/enquiries/whatsapp/webhook', methods=['GET', 'POST'])
 def handle_incoming_whatsapp():
     """Handle incoming WhatsApp messages from GreenAPI webhook"""
+    
+    # Handle GET requests for testing
+    if request.method == 'GET':
+        logger.info(f"🔍 GET request to webhook endpoint from {request.remote_addr}")
+        return jsonify({
+            'status': 'webhook_endpoint_active',
+            'message': 'Webhook endpoint is ready to receive POST requests from GreenAPI',
+            'timestamp': datetime.utcnow().isoformat(),
+            'method_received': 'GET',
+            'expected_method': 'POST'
+        }), 200
+    
     try:
         # Get the incoming data
         data = request.get_json()
         
-        logger.info(f"📥 === NEW WEBHOOK REQUEST ===")
-        logger.info(f"📥 Incoming WhatsApp webhook data: {data}")
+        # Log ALL incoming requests for debugging
+        logger.info(f"📥 === NEW WEBHOOK REQUEST === {datetime.utcnow().isoformat()}")
+        logger.info(f"📥 Request Headers: {dict(request.headers)}")
+        logger.info(f"📥 Request Method: {request.method}")
+        logger.info(f"📥 Request URL: {request.url}")
+        logger.info(f"📥 Raw Data: {request.get_data(as_text=True)}")
+        logger.info(f"📥 Parsed JSON Data: {data}")
         logger.info(f"📥 Data type: {type(data)}")
         logger.info(f"📥 Data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+        
+        # Always return success for debugging - even for non-message events
+        # This helps us see what GreenAPI is actually sending
+        if not data:
+            logger.warning("⚠️ Empty webhook data received - but responding with success")
         
         # Handle empty data
         if not data:
@@ -1157,6 +1179,25 @@ def handle_incoming_whatsapp():
         # If we couldn't extract message info, it might be a non-message event
         if not message_info.get('has_message_data'):
             logger.info("ℹ️ No message data found in webhook, ignoring")
+            
+            # Emit notification for non-message webhook
+            try:
+                from app import socketio
+                notification = {
+                    'type': 'webhook_status',
+                    'status': 'info',
+                    'message': "🔔 WEBHOOK RECEIVED: Non-message event (state change, status update, etc.)",
+                    'details': {
+                        'webhook_type': data.get('typeWebhook', 'unknown'),
+                        'enquiry_created': False,
+                        'reason': 'Not a message event'
+                    },
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                socketio.emit('webhook_notification', notification)
+            except:
+                pass
+            
             return jsonify({
                 'success': True,
                 'message': 'No message data found'
@@ -1403,18 +1444,21 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
         logger.info(f"   Message: {message_text}")
         
         # Determine the display name for the enquiry
-        if sender_name and sender_name.strip():
+        # Handle GreenAPI free version limitations
+        if sender_name and sender_name.strip() and sender_name.strip() != 'null' and sender_name.strip() != '':
             display_name = sender_name.strip()
             logger.info(f"   Using sender name: {display_name}")
         else:
-            display_name = f"WhatsApp User ({clean_number})"
-            logger.info(f"   Using default name: {display_name}")
+            # For free plans, use phone number as identifier
+            display_name = f"WhatsApp User {clean_number}"
+            logger.info(f"   Using phone-based name (free plan): {display_name}")
+            logger.info(f"   Note: Sender name not available in free GreenAPI plan")
         
         # Create a new enquiry record with proper WhatsApp fields
         new_enquiry = {
             'date': datetime.utcnow(),
             'wati_name': display_name,
-            'user_name': sender_name if sender_name and sender_name.strip() else '',  # Store actual WhatsApp username
+            'user_name': sender_name if sender_name and sender_name.strip() and sender_name.strip() != 'null' else '',  # Store actual WhatsApp username (may be empty in free plan)
             'mobile_number': clean_number,
             'secondary_mobile_number': None,
             'gst': '',
@@ -1428,7 +1472,7 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
             'whatsapp_status': 'received',
             'whatsapp_message_id': message_id,
             'whatsapp_chat_id': chat_id,
-            'whatsapp_sender_name': sender_name if sender_name and sender_name.strip() else '',
+            'whatsapp_sender_name': sender_name if sender_name and sender_name.strip() and sender_name.strip() != 'null' else 'Not available (Free plan)',
             'whatsapp_message_text': message_text,
             'whatsapp_sent': False,  # No message sent yet, just received
             'source': 'whatsapp_webhook',
@@ -1462,9 +1506,18 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
             logger.info(f"   Mobile: {clean_number}")
             logger.info(f"   WhatsApp Name: {sender_name}")
             
-            # Emit socket event to notify frontend
+            # Emit socket event to notify frontend with comprehensive status
             try:
                 from app import socketio
+                
+                # Determine the status message based on data availability
+                if sender_name and sender_name.strip() and sender_name.strip() != 'null':
+                    status_message = "✅ SUCCESS: WhatsApp enquiry created with full details"
+                    status_type = "success"
+                else:
+                    status_message = "⚠️ PARTIAL SUCCESS: Enquiry created but sender name not available (Free GreenAPI plan limitation)"
+                    status_type = "warning"
+                
                 # Serialize the enquiry for socket emission
                 socket_data = {
                     '_id': new_enquiry['_id'],
@@ -1478,10 +1531,49 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
                     'created_at': new_enquiry['created_at'].isoformat(),
                     'date': new_enquiry['date'].isoformat()
                 }
+                
+                # Emit enquiry creation event
                 socketio.emit('new_enquiry', socket_data)
-                logger.info(f"📡 Socket event emitted for new WhatsApp enquiry")
+                
+                # Emit status notification
+                status_notification = {
+                    'type': 'webhook_status',
+                    'status': status_type,
+                    'message': status_message,
+                    'details': {
+                        'mobile_number': clean_number,
+                        'sender_name_available': bool(sender_name and sender_name.strip() and sender_name.strip() != 'null'),
+                        'greenapi_plan': 'free',
+                        'whatsapp_account_type': 'normal',
+                        'enquiry_created': True,
+                        'enquiry_id': new_enquiry['_id']
+                    },
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                
+                socketio.emit('webhook_notification', status_notification)
+                logger.info(f"📡 Socket events emitted for new WhatsApp enquiry with status: {status_type}")
+                
             except Exception as socket_error:
                 logger.error(f"❌ Error emitting socket event: {socket_error}")
+                
+                # Even if socket fails, emit a basic notification
+                try:
+                    from app import socketio
+                    error_notification = {
+                        'type': 'webhook_status',
+                        'status': 'error',
+                        'message': f"❌ ERROR: Enquiry created but notification failed: {str(socket_error)}",
+                        'details': {
+                            'mobile_number': clean_number,
+                            'enquiry_created': True,
+                            'notification_error': str(socket_error)
+                        },
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                    socketio.emit('webhook_notification', error_notification)
+                except:
+                    pass  # If even this fails, just log it
             
             return jsonify({
                 'success': True,
@@ -1493,6 +1585,26 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
             }), 200
         else:
             logger.error("❌ Database not available for enquiry creation")
+            
+            # Emit database error notification
+            try:
+                from app import socketio
+                error_notification = {
+                    'type': 'webhook_status',
+                    'status': 'error',
+                    'message': "❌ DATABASE ERROR: Cannot create enquiry - database connection failed",
+                    'details': {
+                        'mobile_number': clean_number,
+                        'sender_name': sender_name,
+                        'enquiry_created': False,
+                        'error_type': 'database_connection'
+                    },
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                socketio.emit('webhook_notification', error_notification)
+            except:
+                pass
+            
             return jsonify({
                 'success': False,
                 'error': 'Database not available'

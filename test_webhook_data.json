@@ -1,0 +1,13 @@
+{
+  "typeWebhook": "incomingMessageReceived",
+  "messageData": {
+    "textMessage": {
+      "text": "Hi I am interested!"
+    },
+    "idMessage": "test123"
+  },
+  "senderData": {
+    "chatId": "919876543210@c.us",
+    "senderName": "Test Friend"
+  }
+}
