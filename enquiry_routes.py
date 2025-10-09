@@ -1165,7 +1165,7 @@ def handle_incoming_whatsapp():
         webhook_type = data.get('typeWebhook', '')
         logger.info(f"🔍 Webhook type: '{webhook_type}'")
         
-        if webhook_type and webhook_type != 'incomingMessageReceived':
+        if webhook_type and webhook_type not in ['incomingMessageReceived', 'outgoingMessageReceived']:
             logger.info(f"ℹ️ Non-message webhook event received: {webhook_type}")
             return jsonify({
                 'success': True,
@@ -1348,6 +1348,72 @@ def _extract_message_info(data):
             
         # Format 4: Alternative format with text directly in data
         elif data.get('typeWebhook') == 'incomingMessageReceived' and 'text' in data:
+            logger.info("📦 Processing Format 4: Direct text format")
+            result['message_text'] = data.get('text', '')
+            result['message_id'] = data.get('idMessage', '')
+            
+            sender_data = data.get('senderData', {})
+            if isinstance(sender_data, dict):
+                result['chat_id'] = sender_data.get('chatId', '')
+                
+                # Try multiple fields for sender name with priority order
+                sender_name_options = [
+                    sender_data.get('senderName', ''),
+                    sender_data.get('chatName', ''),
+                    sender_data.get('pushName', ''),  # WhatsApp push name
+                    sender_data.get('notifyName', '')  # WhatsApp notify name
+                ]
+                
+                # Use the first non-empty name
+                for name_option in sender_name_options:
+                    if name_option and name_option.strip():
+                        result['sender_name'] = name_option.strip()
+                        break
+                        
+                logger.info(f"📋 Sender data fields: {list(sender_data.keys())}")
+                logger.info(f"📋 Selected sender name: '{result['sender_name']}'")
+                
+            result['has_message_data'] = bool(result['message_text'])
+            
+        # Format 5: Outgoing message format (when you send to yourself)
+        elif data.get('typeWebhook') == 'outgoingMessageReceived' and 'messageData' in data:
+            logger.info("📦 Processing Format 5: Outgoing message format (self-message)")
+            message_data = data.get('messageData', {})
+            sender_data = data.get('senderData', {})
+            
+            # Extract text from textMessageData structure
+            if isinstance(message_data, dict):
+                text_data = message_data.get('textMessageData', {})
+                if isinstance(text_data, dict):
+                    result['message_text'] = text_data.get('textMessage', '')
+                
+                # Get message ID from root level
+                result['message_id'] = data.get('idMessage', '')
+                
+            # Extract sender info
+            if isinstance(sender_data, dict):
+                result['chat_id'] = sender_data.get('chatId', '')
+                
+                # Try multiple fields for sender name
+                sender_name_options = [
+                    sender_data.get('senderName', ''),
+                    sender_data.get('chatName', ''),
+                    sender_data.get('senderContactName', ''),
+                    sender_data.get('sender', '').replace('@c.us', '')
+                ]
+                
+                # Use the first non-empty name
+                for name_option in sender_name_options:
+                    if name_option and name_option.strip():
+                        result['sender_name'] = name_option.strip()
+                        break
+                        
+                logger.info(f"📋 Outgoing message sender data: {list(sender_data.keys())}")
+                logger.info(f"📋 Selected sender name: '{result['sender_name']}'")
+                
+            result['has_message_data'] = bool(result['message_text'])
+            
+        # Format 6: Alternative format with text directly in data
             logger.info("📦 Processing Format 4: Direct text format")
             result['message_text'] = data.get('text', '')
             result['message_id'] = data.get('idMessage', '')
