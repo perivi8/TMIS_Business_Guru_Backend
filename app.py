@@ -99,6 +99,13 @@ cors.init_app(app,
 )
 jwt = JWTManager(app)
 
+# Handle OPTIONS requests before JWT validation
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        # Let Flask-CORS handle the OPTIONS request properly
+        return
+
 # Initialize SocketIO with CORS support
 socketio = SocketIO(
     app,
@@ -209,6 +216,19 @@ def cors_debug():
         'request_headers': dict(request.headers),
         'cors_configured': True,
         'flask_env': flask_env,
+        'timestamp': datetime.utcnow().isoformat()
+    }), 200
+
+@app.route('/api/chatbot/test', methods=['GET', 'POST', 'OPTIONS'])
+def chatbot_test():
+    """Test endpoint for chatbot CORS without JWT requirement"""
+    origin = request.headers.get('Origin', 'No Origin Header')
+    
+    return jsonify({
+        'message': 'Chatbot test endpoint working',
+        'method': request.method,
+        'origin': origin,
+        'cors_working': True,
         'timestamp': datetime.utcnow().isoformat()
     }), 200
 
@@ -1733,6 +1753,14 @@ try:
     print("✅ Enquiry blueprint registered successfully")
 except Exception as e:
     print(f"❌ Failed to register enquiry blueprint: {e}")
+
+# Register chatbot blueprint
+try:
+    from chatbot_routes import chatbot_bp
+    app.register_blueprint(chatbot_bp)
+    print("✅ Chatbot blueprint registered successfully")
+except Exception as e:
+    print(f"❌ Failed to register chatbot blueprint: {e}")
 
 # Direct route registration for webhook (fallback)
 try:
