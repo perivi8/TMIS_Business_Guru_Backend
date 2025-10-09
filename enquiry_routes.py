@@ -1037,15 +1037,87 @@ def get_whatsapp_templates():
         return jsonify({'error': f'Failed to get templates: {str(e)}'}), 500
 
 # Add a simple test endpoint to verify the new code is running
+# Force redeployment comment added 2025-10-09
 @enquiry_bp.route('/enquiries/whatsapp/webhook/test', methods=['GET'])
 def test_webhook_handler():
     """Test endpoint to verify the new webhook handler is running"""
     return jsonify({
         'status': 'success',
-        'message': 'New webhook handler is running',
-        'version': '2.0',
-        'timestamp': datetime.utcnow().isoformat()
+        'message': 'Enhanced webhook handler is running with username capture fix',
+        'version': '2.1',
+        'timestamp': datetime.utcnow().isoformat(),
+        'features': [
+            'WhatsApp username capture',
+            'Enhanced mobile number extraction', 
+            'Duplicate prevention',
+            'Comprehensive logging',
+            'Multiple sender name field support'
+        ]
     }), 200
+
+@enquiry_bp.route('/enquiries/whatsapp/webhook/test-data', methods=['POST'])
+def test_webhook_with_data():
+    """Test endpoint to simulate webhook data processing"""
+    try:
+        # Get test data or use default
+        data = request.get_json() or {
+            "typeWebhook": "incomingMessageReceived",
+            "messageData": {
+                "textMessage": {
+                    "text": "Hi I am interested!"
+                },
+                "idMessage": "test_message_" + str(int(datetime.utcnow().timestamp()))
+            },
+            "senderData": {
+                "chatId": "918106811285@c.us",
+                "senderName": "Test User",
+                "pushName": "Test WhatsApp User",
+                "chatName": "Test Chat Name"
+            }
+        }
+        
+        logger.info(f"🧪 Testing webhook with data: {data}")
+        
+        # Extract message info using our enhanced function
+        message_info = _extract_message_info(data)
+        
+        # Test the enquiry creation logic without actually creating
+        chat_id = message_info.get('chat_id', '')
+        sender_name = message_info.get('sender_name', '')
+        message_text = message_info.get('message_text', '')
+        
+        # Clean mobile number
+        sender_number = chat_id.replace('@c.us', '')
+        clean_number = ''.join(filter(str.isdigit, sender_number))
+        
+        # Determine display name
+        if sender_name and sender_name.strip():
+            display_name = sender_name.strip()
+        else:
+            display_name = f"WhatsApp User ({clean_number})"
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Webhook data processing test completed',
+            'extracted_info': message_info,
+            'processed_data': {
+                'display_name': display_name,
+                'whatsapp_username': sender_name,
+                'mobile_number': clean_number,
+                'original_chat_id': chat_id,
+                'message_text': message_text
+            },
+            'would_create_enquiry': message_info.get('has_message_data', False) and _is_interested_message(message_text),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Test webhook error: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Test failed: {str(e)}',
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 @enquiry_bp.route('/enquiries/whatsapp/webhook', methods=['POST'])
 def handle_incoming_whatsapp():
@@ -1054,7 +1126,10 @@ def handle_incoming_whatsapp():
         # Get the incoming data
         data = request.get_json()
         
+        logger.info(f"📥 === NEW WEBHOOK REQUEST ===")
         logger.info(f"📥 Incoming WhatsApp webhook data: {data}")
+        logger.info(f"📥 Data type: {type(data)}")
+        logger.info(f"📥 Data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
         
         # Handle empty data
         if not data:
@@ -1092,6 +1167,13 @@ def handle_incoming_whatsapp():
         sender_name = message_info.get('sender_name', '')
         message_id = message_info.get('message_id', '')
         
+        # Log the extracted information
+        logger.info(f"📋 Extracted Information:")
+        logger.info(f"   Chat ID: {chat_id}")
+        logger.info(f"   Message Text: {message_text}")
+        logger.info(f"   Sender Name: {sender_name}")
+        logger.info(f"   Message ID: {message_id}")
+        
         # Check if we have the minimum required data
         if not message_text:
             logger.info("ℹ️ No message text found, ignoring")
@@ -1101,7 +1183,10 @@ def handle_incoming_whatsapp():
             }), 200
         
         # Check if this is the "I am interested" message
-        if _is_interested_message(message_text):
+        is_interested = _is_interested_message(message_text)
+        logger.info(f"🔍 Is interested message: {is_interested}")
+        
+        if is_interested:
             logger.info(f"✅ Processing interested message from {sender_name or chat_id}: {message_text}")
             return _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
         else:
@@ -1131,8 +1216,14 @@ def _extract_message_info(data):
     }
     
     try:
-        # Format 1: Direct message format (original)
+        # Log the data structure for debugging
+        logger.info(f"🔍 Extracting message info from data structure: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+        
+        # Handle different GreenAPI webhook formats
+        
+        # Format 1: Direct message format (original) - This works
         if 'message' in data and 'chatId' in data and not data.get('typeWebhook'):
+            logger.info("📦 Processing Format 1: Direct message format")
             message_data = data['message']
             result['chat_id'] = data['chatId']
             result['sender_name'] = data.get('senderName', '')
@@ -1142,33 +1233,120 @@ def _extract_message_info(data):
             
         # Format 2: Incoming message received format with messageData
         elif data.get('typeWebhook') == 'incomingMessageReceived' and 'messageData' in data:
+            logger.info("📦 Processing Format 2: Incoming message with messageData")
             message_data = data.get('messageData', {})
-            if 'message' in message_data:
-                msg = message_data['message']
-                result['message_text'] = msg.get('textMessage', {}).get('text', '')
-                result['chat_id'] = message_data.get('sender', '')
-                result['sender_name'] = message_data.get('senderName', '')
-                result['message_id'] = msg.get('idMessage', '')
-                result['has_message_data'] = True
+            sender_data = data.get('senderData', {})
+            
+            # Extract text message - handle different possible structures
+            if isinstance(message_data, dict):
+                # Check for textMessage structure
+                if 'textMessage' in message_data and isinstance(message_data['textMessage'], dict):
+                    result['message_text'] = message_data['textMessage'].get('text', '')
+                # Check for direct text in messageData
+                elif 'text' in message_data:
+                    result['message_text'] = message_data.get('text', '')
+                
+                # Extract message ID
+                result['message_id'] = message_data.get('idMessage', '')
+                
+            # Extract chat ID and sender name from senderData
+            if isinstance(sender_data, dict):
+                result['chat_id'] = sender_data.get('chatId', '')
+                
+                # Try multiple fields for sender name with priority order
+                sender_name_options = [
+                    sender_data.get('senderName', ''),
+                    sender_data.get('chatName', ''),
+                    sender_data.get('pushName', ''),  # WhatsApp push name
+                    sender_data.get('notifyName', '')  # WhatsApp notify name
+                ]
+                
+                # Use the first non-empty name
+                for name_option in sender_name_options:
+                    if name_option and name_option.strip():
+                        result['sender_name'] = name_option.strip()
+                        break
+                
+                logger.info(f"📋 Sender data fields: {list(sender_data.keys())}")
+                logger.info(f"📋 Selected sender name: '{result['sender_name']}'")
+                
+            result['has_message_data'] = bool(result['message_text'])  # Only mark as having data if there's text
                 
         # Format 3: Incoming message received format with direct message
         elif data.get('typeWebhook') == 'incomingMessageReceived' and 'message' in data:
+            logger.info("📦 Processing Format 3: Incoming message with direct message")
             msg = data['message']
-            result['message_text'] = msg.get('textMessage', {}).get('text', '')
-            # Get sender info from senderData
             sender_data = data.get('senderData', {})
-            result['chat_id'] = sender_data.get('chatId', '')
-            result['sender_name'] = sender_data.get('senderName', '')
-            result['message_id'] = msg.get('idMessage') or msg.get('id', '')
-            result['has_message_data'] = True
             
-        # Format 4: State change or other notifications (no message data)
-        elif data.get('typeWebhook') and 'message' not in data:
+            if isinstance(msg, dict):
+                result['message_text'] = msg.get('textMessage', {}).get('text', '')
+                result['message_id'] = msg.get('idMessage') or msg.get('id', '')
+                
+            # Get sender info from senderData with enhanced name extraction
+            if isinstance(sender_data, dict):
+                result['chat_id'] = sender_data.get('chatId', '')
+                
+                # Try multiple fields for sender name with priority order
+                sender_name_options = [
+                    sender_data.get('senderName', ''),
+                    sender_data.get('chatName', ''),
+                    sender_data.get('pushName', ''),  # WhatsApp push name
+                    sender_data.get('notifyName', '')  # WhatsApp notify name
+                ]
+                
+                # Use the first non-empty name
+                for name_option in sender_name_options:
+                    if name_option and name_option.strip():
+                        result['sender_name'] = name_option.strip()
+                        break
+                        
+                logger.info(f"📋 Sender data fields: {list(sender_data.keys())}")
+                logger.info(f"📋 Selected sender name: '{result['sender_name']}'")
+                
+            result['has_message_data'] = bool(result['message_text'])
+            
+        # Format 4: Alternative format with text directly in data
+        elif data.get('typeWebhook') == 'incomingMessageReceived' and 'text' in data:
+            logger.info("📦 Processing Format 4: Direct text format")
+            result['message_text'] = data.get('text', '')
+            result['message_id'] = data.get('idMessage', '')
+            
+            sender_data = data.get('senderData', {})
+            if isinstance(sender_data, dict):
+                result['chat_id'] = sender_data.get('chatId', '')
+                
+                # Try multiple fields for sender name with priority order
+                sender_name_options = [
+                    sender_data.get('senderName', ''),
+                    sender_data.get('chatName', ''),
+                    sender_data.get('pushName', ''),  # WhatsApp push name
+                    sender_data.get('notifyName', '')  # WhatsApp notify name
+                ]
+                
+                # Use the first non-empty name
+                for name_option in sender_name_options:
+                    if name_option and name_option.strip():
+                        result['sender_name'] = name_option.strip()
+                        break
+                        
+                logger.info(f"📋 Sender data fields: {list(sender_data.keys())}")
+                logger.info(f"📋 Selected sender name: '{result['sender_name']}'")
+                
+            result['has_message_data'] = bool(result['message_text'])
+            
+        # Format 5: State change or other notifications (no message data)
+        elif data.get('typeWebhook') and 'message' not in data and 'messageData' not in data:
+            logger.info("📦 Processing Format 5: Non-message event")
             # This is likely a state change or other notification, not a message
             result['has_message_data'] = False
             
+        # Log what we extracted
+        logger.info(f"📤 Extracted data: {result}")
+            
     except Exception as e:
         logger.error(f"Error extracting message info: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
     
     return result
 
@@ -1212,43 +1390,106 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
         # Extract sender information
         sender_number = chat_id.replace('@c.us', '')  # Remove @c.us suffix
         
-        # Create a new enquiry record
+        # Clean and format mobile number
+        # Remove any non-digit characters and ensure proper format
+        clean_number = ''.join(filter(str.isdigit, sender_number))
+        
+        # Log the extracted information for debugging
+        logger.info(f"📋 Creating enquiry from WhatsApp message:")
+        logger.info(f"   Original Chat ID: {chat_id}")
+        logger.info(f"   Extracted Number: {sender_number}")
+        logger.info(f"   Clean Number: {clean_number}")
+        logger.info(f"   Sender Name: {sender_name}")
+        logger.info(f"   Message: {message_text}")
+        
+        # Determine the display name for the enquiry
+        if sender_name and sender_name.strip():
+            display_name = sender_name.strip()
+            logger.info(f"   Using sender name: {display_name}")
+        else:
+            display_name = f"WhatsApp User ({clean_number})"
+            logger.info(f"   Using default name: {display_name}")
+        
+        # Create a new enquiry record with proper WhatsApp fields
         new_enquiry = {
             'date': datetime.utcnow(),
-            'wati_name': f"WhatsApp User ({sender_number})",  # Default name until we get actual name
-            'mobile_number': sender_number,
+            'wati_name': display_name,
+            'user_name': sender_name if sender_name and sender_name.strip() else '',  # Store actual WhatsApp username
+            'mobile_number': clean_number,
+            'secondary_mobile_number': None,
             'gst': '',
+            'gst_status': '',
             'business_type': '',
             'business_nature': '',
-            'staff': '',
+            'staff': 'WhatsApp Bot',  # Default staff assignment
             'comments': 'New Enquiry - Interested',
-            'additional_comments': '',
+            'additional_comments': f'Received via WhatsApp: "{message_text}"',
+            # WhatsApp specific fields
             'whatsapp_status': 'received',
             'whatsapp_message_id': message_id,
-            'whatsapp_sent': True,
+            'whatsapp_chat_id': chat_id,
+            'whatsapp_sender_name': sender_name if sender_name and sender_name.strip() else '',
+            'whatsapp_message_text': message_text,
+            'whatsapp_sent': False,  # No message sent yet, just received
+            'source': 'whatsapp_webhook',
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
         
-        # Try to get sender's actual name if available
-        if sender_name:
-            new_enquiry['wati_name'] = sender_name
-        
         # Insert into database
         if enquiries_collection is not None:
+            # Check if enquiry already exists for this mobile number and message ID to avoid duplicates
+            existing_enquiry = enquiries_collection.find_one({
+                'mobile_number': clean_number,
+                'whatsapp_message_id': message_id
+            })
+            
+            if existing_enquiry:
+                logger.info(f"📝 Enquiry already exists for message ID {message_id}, skipping creation")
+                return jsonify({
+                    'success': True,
+                    'message': 'Enquiry already exists',
+                    'enquiry_id': str(existing_enquiry['_id'])
+                }), 200
+            
+            # Insert new enquiry
             result = enquiries_collection.insert_one(new_enquiry)
             new_enquiry['_id'] = str(result.inserted_id)
             
-            logger.info(f"✅ New enquiry created from WhatsApp message: {new_enquiry['_id']}")
+            logger.info(f"✅ New WhatsApp enquiry created successfully:")
+            logger.info(f"   Enquiry ID: {new_enquiry['_id']}")
+            logger.info(f"   Customer: {display_name}")
+            logger.info(f"   Mobile: {clean_number}")
+            logger.info(f"   WhatsApp Name: {sender_name}")
             
             # Emit socket event to notify frontend
-            from app import socketio
-            socketio.emit('new_enquiry', new_enquiry)
+            try:
+                from app import socketio
+                # Serialize the enquiry for socket emission
+                socket_data = {
+                    '_id': new_enquiry['_id'],
+                    'wati_name': new_enquiry['wati_name'],
+                    'user_name': new_enquiry['user_name'],
+                    'mobile_number': new_enquiry['mobile_number'],
+                    'comments': new_enquiry['comments'],
+                    'staff': new_enquiry['staff'],
+                    'source': new_enquiry['source'],
+                    'whatsapp_sender_name': new_enquiry['whatsapp_sender_name'],
+                    'created_at': new_enquiry['created_at'].isoformat(),
+                    'date': new_enquiry['date'].isoformat()
+                }
+                socketio.emit('new_enquiry', socket_data)
+                logger.info(f"📡 Socket event emitted for new WhatsApp enquiry")
+            except Exception as socket_error:
+                logger.error(f"❌ Error emitting socket event: {socket_error}")
             
             return jsonify({
                 'success': True,
-                'message': 'Enquiry created successfully',
-                'enquiry_id': new_enquiry['_id']
+                'message': 'WhatsApp enquiry created successfully',
+                'enquiry_id': new_enquiry['_id'],
+                'customer_name': display_name,
+                'mobile_number': clean_number,
+                'whatsapp_name': sender_name
             }), 200
         else:
             logger.error("❌ Database not available for enquiry creation")
