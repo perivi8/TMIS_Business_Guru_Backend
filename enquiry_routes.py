@@ -224,6 +224,175 @@ def get_enquiry_by_id(enquiry_id):
         logger.error(f"Error retrieving enquiry {enquiry_id}: {e}")
         return jsonify({'error': 'Failed to retrieve enquiry'}), 500
 
+@enquiry_bp.route('/enquiries/public', methods=['POST'])
+def create_public_enquiry():
+    """Create a new public enquiry without authentication"""
+    # Check if database is available
+    if db is None or enquiries_collection is None:
+        return jsonify({'error': 'Database not available'}), 500
+    
+    try:
+        # Get JSON data with error handling
+        data = request.get_json(force=True)
+        
+        logger.info(f"Received public enquiry creation request: {data}")
+        
+        if not data:
+            logger.error("No data provided in request")
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Validate required fields
+        required_fields = ['wati_name', 'mobile_number']
+        missing_fields = []
+        
+        for field in required_fields:
+            if field not in data:
+                missing_fields.append(f"{field} (not present)")
+            elif not str(data[field]).strip():
+                missing_fields.append(f"{field} (empty)")
+        
+        if missing_fields:
+            error_msg = f"Missing or empty required fields: {', '.join(missing_fields)}"
+            logger.error(error_msg)
+            return jsonify({'error': error_msg}), 400
+        
+        # Validate mobile number format
+        mobile_number = str(data.get('mobile_number', '')).strip()
+        logger.info(f"Validating mobile number: '{mobile_number}'")
+        
+        if not mobile_number:
+            logger.error("Mobile number is empty")
+            return jsonify({'error': 'Mobile number is required'}), 400
+        
+        if not mobile_number.isdigit():
+            logger.error(f"Mobile number contains non-digits: '{mobile_number}'")
+            return jsonify({'error': 'Mobile number must contain only digits'}), 400
+            
+        # Accept mobile numbers with country codes (10-15 digits)
+        if len(mobile_number) < 10 or len(mobile_number) > 15:
+            logger.error(f"Mobile number length is {len(mobile_number)}, expected 10-15 digits: '{mobile_number}'")
+            return jsonify({'error': f'Mobile number must be 10-15 digits (with country code), got {len(mobile_number)}'}), 400
+        
+        # Validate other required fields
+        wati_name = str(data.get('wati_name', '')).strip()
+        # Don't set default staff to 'Public Enquiry', leave it empty so staff can be manually assigned
+        staff = str(data.get('staff', '')).strip()  # Changed from 'Public Enquiry' to empty string
+        comments = str(data.get('comments', 'New Public Enquiry')).strip()
+        business_nature = str(data.get('business_nature', '')).strip()
+        
+        logger.info(f"Wati name: '{wati_name}', Staff: '{staff}', Comments: '{comments}', Business Nature: '{business_nature}'")
+        
+        if not wati_name:
+            return jsonify({'error': 'Name is required'}), 400
+        
+        # Create enquiry document
+        enquiry_data = {
+            'wati_name': wati_name,
+            'user_name': wati_name,  # Use the same name for user_name
+            'mobile_number': mobile_number,
+            'secondary_mobile_number': data.get('secondary_mobile_number'),  # Use the validated variable
+            'gst': data.get('gst', ''),  # Default to empty string
+            'gst_status': '',  # Default to empty
+            'business_type': '',  # Default to empty
+            'business_nature': business_nature,  # Save business name in business_nature column
+            'staff': staff,  # Leave empty instead of 'Public Enquiry'
+            'comments': comments,
+            'additional_comments': '',
+            'date': datetime.utcnow(),
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+            # Remove 'staff_locked': False - no longer needed since we allow staff reassignment
+        }
+        
+        logger.info(f"Final public enquiry document to insert: {enquiry_data}")
+        
+        # Insert enquiry into MongoDB Atlas
+        result = enquiries_collection.insert_one(enquiry_data)
+        
+        # Retrieve the created enquiry
+        created_enquiry = enquiries_collection.find_one({'_id': result.inserted_id})
+        serialized_enquiry = serialize_enquiry(created_enquiry)
+        
+        # Send WhatsApp welcome message for public enquiries
+        try:
+            if whatsapp_service is not None:
+                logger.info(f"Attempting to send WhatsApp welcome message to {mobile_number}")
+                
+                # Determine message type based on comment for new public enquiries
+                message_type = whatsapp_service.get_comment_message_type(comments)
+                logger.info(f"Determined message type for new public enquiry: {message_type}")
+                
+                whatsapp_result = whatsapp_service.send_enquiry_message(
+                    enquiry_data, 
+                    message_type=message_type
+                )
+                
+                if whatsapp_result['success']:
+                    logger.info(f"WhatsApp welcome message sent successfully to {mobile_number}")
+                    serialized_enquiry['whatsapp_sent'] = True
+                    serialized_enquiry['whatsapp_message_id'] = whatsapp_result.get('message_id')
+                    serialized_enquiry['whatsapp_message_type'] = message_type
+                    serialized_enquiry['whatsapp_error'] = None
+                    # Add notification
+                    serialized_enquiry['whatsapp_notification'] = whatsapp_result.get('notification', 'WhatsApp message sent successfully')
+                else:
+                    error_msg = whatsapp_result.get('error', 'Unknown error')
+                    solution = whatsapp_result.get('solution', '')
+                    status_code = whatsapp_result.get('status_code')
+                    
+                    logger.warning(f"Failed to send WhatsApp message: {error_msg}")
+                    
+                    # Provide more specific error messages for common issues
+                    user_friendly_error = "WhatsApp message failed to send"
+                    
+                    if status_code == 466:
+                        user_friendly_error = "Free plan limit reached - Upgrade GreenAPI plan to send messages to more numbers"
+                    elif "quota exceeded" in error_msg.lower():
+                        user_friendly_error = "Free plan limit reached - Upgrade GreenAPI plan to send messages to more numbers"
+                    elif "unauthorized" in error_msg.lower() or status_code == 401:
+                        user_friendly_error = "GreenAPI authentication failed - Check API credentials"
+                    elif "forbidden" in error_msg.lower() or status_code == 403:
+                        user_friendly_error = "GreenAPI access forbidden - Check API permissions"
+                    elif "bad request" in error_msg.lower() or status_code == 400:
+                        user_friendly_error = "Invalid phone number format or WhatsApp not available for this number"
+                    elif "not found" in error_msg.lower() or status_code == 404:
+                        user_friendly_error = "GreenAPI endpoint not found - Check API configuration"
+                    elif "network error" in error_msg.lower():
+                        user_friendly_error = "Network connection error - Check internet connectivity"
+                    else:
+                        # For other errors, show the original error message
+                        user_friendly_error = error_msg
+                    
+                    serialized_enquiry['whatsapp_sent'] = False
+                    serialized_enquiry['whatsapp_error'] = user_friendly_error
+                    
+                    # Add notification for quota exceeded
+                    if status_code == 466 or "quota exceeded" in error_msg.lower():
+                        serialized_enquiry['whatsapp_notification'] = "⚠️ GreenAPI monthly quota exceeded. Please upgrade your GreenAPI plan to send messages to more numbers."
+                    
+                    # Also include the original error for debugging
+                    if solution:
+                        serialized_enquiry['whatsapp_debug_error'] = f"{error_msg}. Solution: {solution}"
+                    else:
+                        serialized_enquiry['whatsapp_debug_error'] = error_msg
+            else:
+                logger.error("WhatsApp service is not initialized")
+                serialized_enquiry['whatsapp_sent'] = False
+                serialized_enquiry['whatsapp_error'] = "WhatsApp service not available - Check GreenAPI configuration"
+                
+        except Exception as whatsapp_error:
+            logger.error(f"WhatsApp service error: {str(whatsapp_error)}")
+            serialized_enquiry['whatsapp_sent'] = False
+            serialized_enquiry['whatsapp_error'] = str(whatsapp_error)
+        
+        logger.info(f"Successfully created public enquiry {result.inserted_id}")
+        return jsonify(serialized_enquiry), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating public enquiry: {str(e)}", exc_info=True)
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+@enquiry_bp.route('/enquiries/public', methods=['POST'])
 @enquiry_bp.route('/enquiries', methods=['POST'])
 @jwt_required()
 def create_enquiry():
@@ -346,6 +515,7 @@ def create_enquiry():
             'date': parsed_date,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
+            # Remove 'staff_locked': False - no longer needed since we allow staff reassignment
         }
         
         logger.info(f"Final enquiry document to insert: {enquiry_data}")
@@ -429,11 +599,11 @@ def create_enquiry():
             serialized_enquiry['whatsapp_sent'] = False
             serialized_enquiry['whatsapp_error'] = str(whatsapp_error)
         
-        logger.info(f"Successfully created enquiry {result.inserted_id} for user {current_user}")
+        logger.info(f"Successfully created public enquiry {result.inserted_id}")
         return jsonify(serialized_enquiry), 201
         
     except Exception as e:
-        logger.error(f"Error creating enquiry: {str(e)}", exc_info=True)
+        logger.error(f"Error creating public enquiry: {str(e)}", exc_info=True)
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 @enquiry_bp.route('/enquiries/<enquiry_id>', methods=['PUT'])
@@ -443,7 +613,7 @@ def update_enquiry(enquiry_id):
     # Check if database is available
     if db is None or enquiries_collection is None:
         return jsonify({'error': 'Database not available'}), 500
-    
+
     try:
         current_user = get_jwt_identity()
         data = request.get_json()
@@ -461,6 +631,14 @@ def update_enquiry(enquiry_id):
         existing_enquiry = enquiries_collection.find_one({'_id': ObjectId(enquiry_id)})
         if not existing_enquiry:
             return jsonify({'error': 'Enquiry not found'}), 404
+        
+        # Check if staff is already assigned and locked
+        if existing_enquiry.get('staff_locked', False) and 'staff' in data:
+            old_staff = existing_enquiry.get('staff', '')
+            new_staff = data['staff']
+            # Only allow staff changes if it's the same staff member or if staff is being cleared
+            if new_staff and new_staff.strip() != '' and new_staff != old_staff:
+                return jsonify({'error': 'Staff assignment is locked. Cannot change assigned staff member.'}), 400
         
         # Validate mobile numbers if provided (accept 10-15 digits with country code)
         if 'mobile_number' in data:
@@ -531,80 +709,119 @@ def update_enquiry(enquiry_id):
         
         # Send WhatsApp message when enquiry is updated (similar to create_enquiry)
         try:
-            if whatsapp_service is not None and 'comments' in data and updated_enquiry is not None:
+            if whatsapp_service is not None and updated_enquiry is not None:
                 # Check if comments have changed
-                # Handle None values and ensure proper string comparison
-                old_comments = existing_enquiry.get('comments')
-                new_comments = data['comments']
-                
-                # Convert to strings and strip whitespace for comparison
-                old_comments_str = str(old_comments).strip() if old_comments is not None else ''
-                new_comments_str = str(new_comments).strip() if new_comments is not None else ''
-                
-                # Only send WhatsApp message if comments actually changed
-                if new_comments_str != old_comments_str:
-                    logger.info(f"Comments changed from '{old_comments_str}' to '{new_comments_str}', sending WhatsApp message")
+                if 'comments' in data:
+                    # Handle None values and ensure proper string comparison
+                    old_comments = existing_enquiry.get('comments')
+                    new_comments = data['comments']
                     
-                    # Determine message type based on new comments
-                    message_type = whatsapp_service.get_comment_message_type(new_comments_str)
-                    logger.info(f"Determined message type for updated enquiry: {message_type}")
+                    # Convert to strings and strip whitespace for comparison
+                    old_comments_str = str(old_comments).strip() if old_comments is not None else ''
+                    new_comments_str = str(new_comments).strip() if new_comments is not None else ''
                     
-                    # Send WhatsApp message for updated enquiry
-                    whatsapp_result = whatsapp_service.send_enquiry_message(
-                        updated_enquiry, 
-                        message_type=message_type
-                    )
-                    
-                    if whatsapp_result['success']:
-                        logger.info(f"WhatsApp update message sent successfully to {updated_enquiry.get('mobile_number', 'unknown number')}")
-                        serialized_enquiry['whatsapp_sent'] = True
-                        serialized_enquiry['whatsapp_message_id'] = whatsapp_result.get('message_id')
-                        serialized_enquiry['whatsapp_message_type'] = message_type
-                        serialized_enquiry['whatsapp_error'] = None
-                        # Add notification
-                        serialized_enquiry['whatsapp_notification'] = whatsapp_result.get('notification', 'WhatsApp message sent successfully')
-                    else:
-                        error_msg = whatsapp_result.get('error', 'Unknown error')
-                        solution = whatsapp_result.get('solution', '')
-                        status_code = whatsapp_result.get('status_code')
+                    # Only send WhatsApp message if comments actually changed
+                    if new_comments_str != old_comments_str:
+                        logger.info(f"Comments changed from '{old_comments_str}' to '{new_comments_str}', sending WhatsApp message")
                         
-                        logger.warning(f"Failed to send WhatsApp update message: {error_msg}")
+                        # Determine message type based on new comments
+                        message_type = whatsapp_service.get_comment_message_type(new_comments_str)
+                        logger.info(f"Determined message type for updated enquiry: {message_type}")
                         
-                        # Provide more specific error messages for common issues
-                        user_friendly_error = "WhatsApp message failed to send"
+                        # Send WhatsApp message for updated enquiry
+                        whatsapp_result = whatsapp_service.send_enquiry_message(
+                            updated_enquiry, 
+                            message_type=message_type
+                        )
                         
-                        if status_code == 466:
-                            user_friendly_error = "Free plan limit reached - Upgrade GreenAPI plan to send messages to more numbers"
-                        elif "quota exceeded" in error_msg.lower():
-                            user_friendly_error = "Free plan limit reached - Upgrade GreenAPI plan to send messages to more numbers"
-                        elif "unauthorized" in error_msg.lower() or status_code == 401:
-                            user_friendly_error = "GreenAPI authentication failed - Check API credentials"
-                        elif "forbidden" in error_msg.lower() or status_code == 403:
-                            user_friendly_error = "GreenAPI access forbidden - Check API permissions"
-                        elif "bad request" in error_msg.lower() or status_code == 400:
-                            user_friendly_error = "Invalid phone number format or WhatsApp not available for this number"
-                        elif "not found" in error_msg.lower() or status_code == 404:
-                            user_friendly_error = "GreenAPI endpoint not found - Check API configuration"
-                        elif "network error" in error_msg.lower():
-                            user_friendly_error = "Network connection error - Check internet connectivity"
+                        if whatsapp_result['success']:
+                            logger.info(f"WhatsApp update message sent successfully to {updated_enquiry.get('mobile_number', 'unknown number')}")
+                            serialized_enquiry['whatsapp_sent'] = True
+                            serialized_enquiry['whatsapp_message_id'] = whatsapp_result.get('message_id')
+                            serialized_enquiry['whatsapp_message_type'] = message_type
+                            serialized_enquiry['whatsapp_error'] = None
+                            # Add notification
+                            serialized_enquiry['whatsapp_notification'] = whatsapp_result.get('notification', 'WhatsApp message sent successfully')
                         else:
-                            # For other errors, show the original error message
-                            user_friendly_error = error_msg
+                            error_msg = whatsapp_result.get('error', 'Unknown error')
+                            solution = whatsapp_result.get('solution', '')
+                            status_code = whatsapp_result.get('status_code')
+                            
+                            logger.warning(f"Failed to send WhatsApp update message: {error_msg}")
+                            
+                            # Provide more specific error messages for common issues
+                            user_friendly_error = "WhatsApp message failed to send"
+                            
+                            if status_code == 466:
+                                user_friendly_error = "Free plan limit reached - Upgrade GreenAPI plan to send messages to more numbers"
+                            elif "quota exceeded" in error_msg.lower():
+                                user_friendly_error = "Free plan limit reached - Upgrade GreenAPI plan to send messages to more numbers"
+                            elif "unauthorized" in error_msg.lower() or status_code == 401:
+                                user_friendly_error = "GreenAPI authentication failed - Check API credentials"
+                            elif "forbidden" in error_msg.lower() or status_code == 403:
+                                user_friendly_error = "GreenAPI access forbidden - Check API permissions"
+                            elif "bad request" in error_msg.lower() or status_code == 400:
+                                user_friendly_error = "Invalid phone number format or WhatsApp not available for this number"
+                            elif "not found" in error_msg.lower() or status_code == 404:
+                                user_friendly_error = "GreenAPI endpoint not found - Check API configuration"
+                            elif "network error" in error_msg.lower():
+                                user_friendly_error = "Network connection error - Check internet connectivity"
+                            else:
+                                # For other errors, show the original error message
+                                user_friendly_error = error_msg
+                            
+                            serialized_enquiry['whatsapp_sent'] = False
+                            serialized_enquiry['whatsapp_error'] = user_friendly_error
+                            
+                            # Add notification for quota exceeded
+                            if status_code == 466 or "quota exceeded" in error_msg.lower():
+                                serialized_enquiry['whatsapp_notification'] = "⚠️ GreenAPI monthly quota exceeded. Please upgrade your GreenAPI plan to send messages to more numbers."
+                            
+                            # Also include the original error for debugging
+                            if solution:
+                                serialized_enquiry['whatsapp_debug_error'] = f"{error_msg}. Solution: {solution}"
+                            else:
+                                serialized_enquiry['whatsapp_debug_error'] = error_msg
+                
+                # Check if staff has been assigned
+                if 'staff' in data:
+                    new_staff = data['staff']
+                    
+                    # Always send staff assignment messages when staff is assigned/changed
+                    # Remove the condition that only sent messages on first assignment
+                    if new_staff and new_staff.strip() != '' and new_staff != 'None':
+                        logger.info(f"Staff assigned/updated to '{new_staff}', sending staff assignment messages")
                         
-                        serialized_enquiry['whatsapp_sent'] = False
-                        serialized_enquiry['whatsapp_error'] = user_friendly_error
+                        # Send the three staff assignment messages
+                        whatsapp_result = whatsapp_service.send_staff_assignment_messages(
+                            updated_enquiry, 
+                            new_staff
+                        )
                         
-                        # Add notification for quota exceeded
-                        if status_code == 466 or "quota exceeded" in error_msg.lower():
-                            serialized_enquiry['whatsapp_notification'] = "⚠️ GreenAPI monthly quota exceeded. Please upgrade your GreenAPI plan to send messages to more numbers."
-                        
-                        # Also include the original error for debugging
-                        if solution:
-                            serialized_enquiry['whatsapp_debug_error'] = f"{error_msg}. Solution: {solution}"
+                        if whatsapp_result['success']:
+                            logger.info(f"Staff assignment messages sent successfully to {updated_enquiry.get('mobile_number', 'unknown number')}")
+                            serialized_enquiry['whatsapp_sent'] = True
+                            serialized_enquiry['whatsapp_message_id'] = 'staff_assignment_' + str(int(datetime.utcnow().timestamp()))
+                            serialized_enquiry['whatsapp_message_type'] = 'staff_assignment'
+                            serialized_enquiry['whatsapp_error'] = None
+                            # Add notification
+                            serialized_enquiry['whatsapp_notification'] = whatsapp_result.get('notification', 'WhatsApp staff assignment messages sent successfully')
+                            
+                            # Remove staff locking - allow staff to be reassigned to other enquiries
+                            # Do not lock the staff assignment
+                            logger.info(f"Staff assignment completed for enquiry {enquiry_id} - staff not locked")
                         else:
-                            serialized_enquiry['whatsapp_debug_error'] = error_msg
-                else:
-                    logger.info("Comments unchanged, skipping WhatsApp message")
+                            error_msg = whatsapp_result.get('error', 'Unknown error')
+                            logger.warning(f"Failed to send staff assignment messages: {error_msg}")
+                            
+                            serialized_enquiry['whatsapp_sent'] = False
+                            serialized_enquiry['whatsapp_error'] = f"Staff assignment messages failed: {error_msg}"
+                            
+                            # Add notification for quota exceeded
+                            if "quota exceeded" in error_msg.lower() or "466" in str(whatsapp_result.get('status_code', '')):
+                                serialized_enquiry['whatsapp_notification'] = "⚠️ GreenAPI monthly quota exceeded. Please upgrade your GreenAPI plan to send messages to more numbers."
+                            else:
+                                serialized_enquiry['whatsapp_notification'] = f"⚠️ WhatsApp staff assignment messages failed: {error_msg}"
             elif whatsapp_service is None:
                 logger.error("WhatsApp service is not initialized")
                 serialized_enquiry['whatsapp_sent'] = False
@@ -613,8 +830,6 @@ def update_enquiry(enquiry_id):
                 logger.error("Failed to retrieve updated enquiry")
                 serialized_enquiry['whatsapp_sent'] = False
                 serialized_enquiry['whatsapp_error'] = "Failed to retrieve updated enquiry"
-            else:
-                logger.info("No comments in update data, skipping WhatsApp message")
                 
         except Exception as whatsapp_error:
             logger.error(f"WhatsApp service error during update: {str(whatsapp_error)}")

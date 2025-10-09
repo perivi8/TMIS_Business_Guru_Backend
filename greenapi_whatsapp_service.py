@@ -444,6 +444,85 @@ We're always here to support your business financing needs. Feel free to reach o
 Thank you and have a great day! 🌟😊"""
         }
     
+    def send_staff_assignment_messages(self, enquiry_data: Dict[str, Any], staff_name: str) -> Dict[str, Any]:
+        """
+        Send three sequential messages when staff is assigned to an enquiry
+        
+        Args:
+            enquiry_data (dict): Enquiry information
+            staff_name (str): Name of the assigned staff member
+            
+        Returns:
+            Dict: Result of message sending
+        """
+        try:
+            mobile_number = enquiry_data.get('mobile_number')
+            customer_name = enquiry_data.get('wati_name', 'Customer')
+            
+            if not mobile_number:
+                logger.error("No mobile number provided in enquiry data")
+                return {
+                    'success': False,
+                    'error': 'No mobile number provided'
+                }
+            
+            # Message 1: Introduction
+            message1 = f"""Hi Sir/Madam
+
+This is {staff_name}
+
+How can I help you
+
+We provide collateral free loan for all kinds of businesses based on transactions
+
+Loan from 5 lacs to 5 crores - GST is must 
+
+Working Hours : 10.00AM - 6.00PM"""
+            
+            # Message 2: Business information request
+            message2 = "Could you please tell us about your business and its nature"
+            
+            # Message 3: Loan amount request
+            message3 = "And what is the loan amount you require"
+            
+            # Send messages sequentially
+            messages = [message1, message2, message3]
+            results = []
+            
+            for i, message in enumerate(messages, 1):
+                logger.info(f"Sending staff assignment message {i} to {mobile_number}")
+                result = self.send_message(mobile_number, message)
+                results.append(result)
+                
+                # If any message fails, stop sending the rest
+                if not result['success']:
+                    logger.error(f"Failed to send staff assignment message {i}: {result.get('error')}")
+                    return {
+                        'success': False,
+                        'error': f'Failed to send message {i}: {result.get("error")}',
+                        'messages_sent': i,
+                        'results': results
+                    }
+                
+                # Add a small delay between messages to ensure proper delivery order
+                import time
+                time.sleep(1)
+            
+            logger.info(f"Successfully sent all staff assignment messages to {mobile_number}")
+            return {
+                'success': True,
+                'messages_sent': 3,
+                'results': results,
+                'notification': f"✅ 3 WhatsApp messages sent successfully to {customer_name}"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in send_staff_assignment_messages: {str(e)}")
+            return {
+                'success': False,
+                'error': f'Error: {str(e)}'
+            }
+    
     def send_enquiry_message(self, enquiry_data: Dict[str, Any], message_type: str = 'new_enquiry') -> Dict[str, Any]:
         """
         Send a message based on enquiry data and type
