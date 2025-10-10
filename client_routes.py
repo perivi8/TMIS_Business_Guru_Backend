@@ -926,17 +926,21 @@ def update_client(client_id):
         
         print(f"Update data - Status: {status}, Feedback: {feedback}, Comments: {comments}")
         
+        # MODIFICATION: Allow all users to update all clients
+        # Previously: Only admin can update status and feedback, regular users can update comments on their own clients
+        # Now: All users can update status, feedback, and comments on all clients
         # Check permissions
         # Only admin can update status and feedback
         # Regular users can update comments on their own clients
-        if (status is not None or feedback is not None) and user_role != 'admin':
-            print(f"❌ Permission denied: Non-admin user trying to update status/feedback")
-            return jsonify({'error': 'Unauthorized'}), 403
-        
-        # Check if regular user is trying to update someone else's client
-        if user_role != 'admin' and client.get('created_by') != current_user_id:
-            print(f"❌ Permission denied: User {current_user_id} cannot update client created by {client.get('created_by')}")
-            return jsonify({'error': 'Unauthorized'}), 403
+        # if (status is not None or feedback is not None) and user_role != 'admin':
+        #     print(f"❌ Permission denied: Non-admin user trying to update status/feedback")
+        #     return jsonify({'error': 'Unauthorized'}), 403
+        # 
+        # # Check if regular user is trying to update someone else's client
+        # if user_role != 'admin' and client.get('created_by') != current_user_id:
+        #     print(f"❌ Permission denied: User {current_user_id} cannot update client created by {client.get('created_by')}")
+        #     return jsonify({'error': 'Unauthorized'}), 403
+        print(f"✅ Permission granted for user {current_user_id} to update client {client_id} (modified permission)")
         
         # Prepare update data
         update_fields = {
@@ -944,12 +948,21 @@ def update_client(client_id):
             'updated_by': current_user_id
         }
         
-        # Only add fields that are provided and user has permission to update
-        if status is not None and user_role == 'admin':
+        # MODIFICATION: Allow all users to update all fields
+        # Previously: Only add fields that are provided and user has permission to update
+        # Now: Allow all users to update all fields
+        # if status is not None and user_role == 'admin':
+        #     update_fields['status'] = status
+        # if feedback is not None and user_role == 'admin':
+        #     update_fields['feedback'] = feedback
+        # # Comments can be updated by both admin and regular users (if they own the client)
+        # if comments is not None:
+        #     update_fields['comments'] = comments
+        # Allow all users to update all fields
+        if status is not None:
             update_fields['status'] = status
-        if feedback is not None and user_role == 'admin':
+        if feedback is not None:
             update_fields['feedback'] = feedback
-        # Comments can be updated by both admin and regular users (if they own the client)
         if comments is not None:
             update_fields['comments'] = comments
         
@@ -1077,9 +1090,12 @@ def get_client_details(client_id):
         if not client:
             return jsonify({'error': 'Client not found'}), 404
         
-        # Check permissions - admin can see all, users can see only their clients
-        if user_role != 'admin' and client.get('created_by') != current_user_id:
-            return jsonify({'error': 'Unauthorized'}), 403
+        # MODIFICATION: Allow all users to view all client details
+        # Previously: admin can see all, users can see only their clients
+        # Now: all users can see all clients
+        # if user_role != 'admin' and client.get('created_by') != current_user_id:
+        #     return jsonify({'error': 'Unauthorized'}), 403
+        print(f"Allowing user {current_user_id} to view client {client_id} (modified permission)")
         
         # Get staff information
         staff = users_collection.find_one({'_id': ObjectId(client['created_by'])})
@@ -1228,6 +1244,9 @@ def update_client_details(client_id):
         if not client:
             return jsonify({'error': 'Client not found'}), 404
         
+        # MODIFICATION: Allow all users to update all clients
+        # Previously: admin can update all, users can update only their clients
+        # Now: all users can update all clients
         # Check permissions - admin can update all, users can update only their clients
         print(f"=== PERMISSION CHECK ===")
         print(f"User role: {user_role}")
@@ -1236,9 +1255,10 @@ def update_client_details(client_id):
         print(f"Is admin: {user_role == 'admin'}")
         print(f"Is owner: {client.get('created_by') == current_user_id}")
         
-        if user_role != 'admin' and client.get('created_by') != current_user_id:
-            print(f"❌ Permission denied: User {current_user_id} (role: {user_role}) cannot update client created by {client.get('created_by')}")
-            return jsonify({'error': 'Unauthorized'}), 403
+        # if user_role != 'admin' and client.get('created_by') != current_user_id:
+        #     print(f"❌ Permission denied: User {current_user_id} (role: {user_role}) cannot update client created by {client.get('created_by')}")
+        #     return jsonify({'error': 'Unauthorized'}), 403
+        print(f"✅ Permission granted for user {current_user_id} to update client {client_id} (modified permission)")
         
         print(f"✅ Permission granted for user {current_user_id} to update client {client_id}")
         
@@ -1585,9 +1605,12 @@ def delete_client(client_id):
         if not client:
             return jsonify({'error': 'Client not found'}), 404
         
-        # Check permissions - admin can delete all, users can delete only their clients
-        if user_role != 'admin' and client.get('created_by') != current_user_id:
-            return jsonify({'error': 'Unauthorized'}), 403
+        # MODIFICATION: Allow all users to delete all clients
+        # Previously: admin can delete all, users can delete only their clients
+        # Now: all users can delete all clients
+        # if user_role != 'admin' and client.get('created_by') != current_user_id:
+        #     return jsonify({'error': 'Unauthorized'}), 403
+        print(f"Allowing user {current_user_id} to delete client {client_id} (modified permission)")
         
         # Delete all associated documents from file system and Cloudinary
         documents_deleted = 0
