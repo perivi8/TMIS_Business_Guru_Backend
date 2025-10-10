@@ -296,6 +296,7 @@ def create_public_enquiry():
             'whatsapp_status': 'pending',
             'whatsapp_sent': False,
             'source': 'public_form',
+            'staff_locked': False,  # Keep unlocked for public forms
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
@@ -306,10 +307,46 @@ def create_public_enquiry():
         
         logger.info(f"Created public enquiry for {wati_name} ({clean_number})")
         
+        # Send WhatsApp welcome message
+        whatsapp_result = None
+        try:
+            if whatsapp_service and whatsapp_service.api_available:
+                logger.info(f"Attempting to send WhatsApp welcome message to {clean_number}")
+                
+                # Send the welcome message using the enquiry message function
+                # For public form enquiries, use the template without 'Get Loan' option
+                whatsapp_result = whatsapp_service.send_enquiry_message(new_enquiry, 'new_enquiry_public_form')
+                
+                if whatsapp_result['success']:
+                    logger.info(f"WhatsApp welcome message sent successfully to {clean_number}")
+                    # Update enquiry to mark welcome message as sent
+                    new_enquiry['whatsapp_sent'] = True
+                    enquiries_collection.update_one(
+                        {'_id': result.inserted_id},
+                        {'$set': {'whatsapp_sent': True, 'updated_at': datetime.utcnow()}}
+                    )
+                else:
+                    error_msg = whatsapp_result.get('error', 'Unknown error')
+                    logger.error(f"Failed to send WhatsApp welcome message to {clean_number}: {error_msg}")
+            else:
+                logger.error("WhatsApp service is not available")
+                whatsapp_result = {
+                    'success': False,
+                    'error': 'WhatsApp service not available - Check GreenAPI configuration'
+                }
+        except Exception as whatsapp_error:
+            logger.error(f"Error sending WhatsApp welcome message: {str(whatsapp_error)}")
+            whatsapp_result = {
+                'success': False,
+                'error': f'Error sending WhatsApp message: {str(whatsapp_error)}'
+            }
+        
         return jsonify({
             'success': True,
             'message': 'Enquiry created successfully',
-            'enquiry_id': str(result.inserted_id)
+            'enquiry_id': str(result.inserted_id),
+            'whatsapp_sent': whatsapp_result['success'] if whatsapp_result else False,
+            'whatsapp_error': whatsapp_result.get('error') if whatsapp_result else None
         }), 201
         
     except Exception as e:
@@ -895,6 +932,7 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
             'whatsapp_message_text': message_text,
             'whatsapp_sent': False,  # No message sent yet, just received
             'source': 'whatsapp_webhook',
+            'staff_locked': False,  # Keep unlocked for WhatsApp forms
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow()
         }
@@ -1174,7 +1212,11 @@ def update_enquiry(enquiry_id):
             return jsonify({'error': 'Enquiry not found'}), 404
         
         # Check if staff is already assigned and locked
-        if existing_enquiry.get('staff_locked', False) and 'staff' in data:
+        # Allow editing if staff is "Public Form" or "WhatsApp Form" regardless of lock status
+        current_staff = existing_enquiry.get('staff', '')
+        is_public_or_whatsapp_form = current_staff in ['Public Form', 'WhatsApp Form', 'WhatsApp Bot']
+        
+        if existing_enquiry.get('staff_locked', False) and 'staff' in data and not is_public_or_whatsapp_form:
             old_staff = existing_enquiry.get('staff', '')
             new_staff = data['staff']
             # Only allow staff changes if it's the same staff member or if staff is being cleared
@@ -1234,6 +1276,19 @@ def update_enquiry(enquiry_id):
                     update_doc[field] = data[field].strip() or None
                 else:
                     update_doc[field] = data[field]
+        
+        # Check if staff is being assigned (not Public Form or WhatsApp Form)
+        # If so, lock the staff assignment
+        if 'staff' in data:
+            new_staff = data['staff']
+            if new_staff and new_staff.strip() not in ['Public Form', 'WhatsApp Form', 'WhatsApp Bot', '']:
+                # Lock the staff assignment
+                update_doc['staff_locked'] = True
+                logger.info(f"Staff assigned: {new_staff}. Locking staff assignment.")
+            elif new_staff and new_staff.strip() in ['Public Form', 'WhatsApp Form', 'WhatsApp Bot']:
+                # Keep unlocked for public/whatsapp forms
+                update_doc['staff_locked'] = False
+                logger.info(f"Public/WhatsApp form staff assigned: {new_staff}. Keeping unlocked.")
         
         # Update enquiry
         result = enquiries_collection.update_one(

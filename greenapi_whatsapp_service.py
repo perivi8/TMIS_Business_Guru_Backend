@@ -318,6 +318,36 @@ Your success journey begins now! 🚀
 
 🔗 More Details: https://wa.me/918106811285?text=More%20Details""",
             
+            'new_enquiry_public_form': """Hi {wati_name}👋 Welcome to Business Guru Loans!
+
+Get ₹10 Lakhs in 24 hours for your business:
+
+✅ 1% monthly interest (Lowest in market!)
+
+✅ Zero collateral or CIBIL checks
+
+✅ New startups welcome
+
+
+✨ Special Benefits:
+
+- 0% processing fees (First 50 applicants)
+
+- Flexible repayment: 1-5 years
+
+🏆 Trusted by 2,500+ businesses
+
+
+Your success journey begins now! 🚀
+
+*Please click on any option below:*
+
+🔗 Get Loan: https://wa.me/918106811285?text=Get%20Loan
+
+🔗 Check Eligibility: https://wa.me/918106811285?text=Check%20Eligibility
+
+🔗 More Details: https://wa.me/918106811285?text=More%20Details""",
+            
             'no_gst': """Hii {wati_name} sir/madam! 🙏
 
 We regret to inform you that we're unable to process your loan application at this time due to the absence of GST registration. GST registration is a mandatory requirement for our collateral loan services as it helps us verify your business credentials and compliance status. We recommend you to register for GST at the earliest convenience through the official portal. Once you've completed your GST registration, please contact us again so we can proceed with your application. 
@@ -667,8 +697,12 @@ Working Hours : 10.00AM - 6.00PM"""
             'no gst': 'no_gst',
             'gst cancelled': 'gst_cancelled',
             'will share doc': 'will_share_doc',
+            'doc shared(yet to verify)': 'doc_shared',
             'doc shared': 'doc_shared',
+            'verified(shortlisted)': 'verified_shortlisted',
             'verified shortlisted': 'verified_shortlisted',
+            'verified': 'verified_shortlisted',
+            'shortlisted': 'verified_shortlisted',
             'not eligible': 'not_eligible',
             'no msme': 'no_msme',
             'aadhar/pan name mismatch': 'aadhar_pan_mismatch',
