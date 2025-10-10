@@ -713,20 +713,29 @@ def get_team():
         if db is None:
             return jsonify({'error': 'Database connection failed'}), 500
         
-        # All authenticated users can view team members
-        # Only show approved/active users (explicitly exclude pending and rejected)
-        team_members = list(users_collection.find(
-            {
+        # Check if current user is admin
+        claims = get_jwt()
+        is_admin = claims.get('role') == 'admin'
+        
+        # Build query based on user role
+        if is_admin:
+            # Admins see all users except pending and rejected (including paused users)
+            query = {
                 'role': {'$in': ['admin', 'user']},
-                '$and': [
-                    {'status': {'$ne': 'pending'}},    # Exclude pending users
-                    {'status': {'$ne': 'rejected'}},   # Exclude rejected users
-                    {'$or': [
-                        {'status': 'active'},
-                        {'status': {'$exists': False}}  # Legacy users without status field
-                    ]}
-                ]
-            },
+                'status': {'$nin': ['pending', 'rejected']}
+            }
+        else:
+            # Non-admins see only active users (exclude pending, rejected, and paused)
+            query = {
+                'role': {'$in': ['admin', 'user']},
+                'status': {'$in': ['active', None]}  # active or no status (legacy users)
+            }
+        
+        # All authenticated users can view team members
+        # Show approved/active users to all users
+        # Show paused users only to admins for management
+        team_members = list(users_collection.find(
+            query,
             {'password': 0}  # Exclude password
         ))
         
@@ -1346,6 +1355,127 @@ def reject_user(user_id):
         
     except Exception as e:
         print(f"Reject user error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/pause-user/<user_id>', methods=['POST'])
+@jwt_required()
+def pause_user(user_id):
+    """Pause a user - Admin only"""
+    try:
+        print(f"⏸️ Pause user request for ID: {user_id}")
+        
+        # Check if user is admin
+        claims = get_jwt()
+        current_user_id = get_jwt_identity()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Validate ObjectId format
+        try:
+            obj_id = ObjectId(user_id)
+        except Exception as e:
+            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            return jsonify({'error': 'Invalid user ID format'}), 400
+        
+        # Prevent admin from pausing themselves
+        if user_id == current_user_id:
+            return jsonify({'error': 'Cannot pause your own account'}), 400
+        
+        # Find the user to pause
+        user_to_pause = users_collection.find_one({'_id': obj_id})
+        if not user_to_pause:
+            print(f"❌ No user found with ID: {user_id}")
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Prevent pausing other admins (optional security measure)
+        if user_to_pause.get('role') == 'admin':
+            return jsonify({'error': 'Cannot pause admin users'}), 403
+        
+        print(f"✅ Found user to pause: {user_to_pause.get('username')} ({user_to_pause.get('email')})")
+        
+        # Check if user is already paused
+        if user_to_pause.get('status') == 'paused':
+            return jsonify({'error': 'User is already paused'}), 400
+        
+        # Pause the user
+        result = users_collection.update_one(
+            {'_id': obj_id},
+            {'$set': {'status': 'paused', 'paused_at': datetime.utcnow(), 'paused_by': current_user_id}}
+        )
+        
+        if result.modified_count == 0:
+            return jsonify({'error': 'Failed to pause user'}), 500
+        
+        print(f"✅ Successfully paused user: {user_to_pause.get('username')}")
+        
+        return jsonify({
+            'message': 'User paused successfully',
+            'user_id': user_id
+        }), 200
+        
+    except Exception as e:
+        print(f"Pause user error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/resume-user/<user_id>', methods=['POST'])
+@jwt_required()
+def resume_user(user_id):
+    """Resume a paused user - Admin only"""
+    try:
+        print(f"▶️ Resume user request for ID: {user_id}")
+        
+        # Check if user is admin
+        claims = get_jwt()
+        current_user_id = get_jwt_identity()
+        if claims.get('role') != 'admin':
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Check database connection
+        if db is None:
+            return jsonify({'error': 'Database connection failed'}), 500
+        
+        # Validate ObjectId format
+        try:
+            obj_id = ObjectId(user_id)
+        except Exception as e:
+            print(f"❌ Invalid ObjectId format: {user_id}, error: {e}")
+            return jsonify({'error': 'Invalid user ID format'}), 400
+        
+        # Find the user to resume
+        user_to_resume = users_collection.find_one({'_id': obj_id})
+        if not user_to_resume:
+            print(f"❌ No user found with ID: {user_id}")
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Check if user is actually paused
+        if user_to_resume.get('status') != 'paused':
+            return jsonify({'error': 'User is not paused'}), 400
+        
+        print(f"✅ Found user to resume: {user_to_resume.get('username')} ({user_to_resume.get('email')})")
+        
+        # Resume the user
+        result = users_collection.update_one(
+            {'_id': obj_id},
+            {'$set': {'status': 'active', 'resumed_at': datetime.utcnow(), 'resumed_by': current_user_id},
+             '$unset': {'paused_at': '', 'paused_by': ''}}
+        )
+        
+        if result.modified_count == 0:
+            return jsonify({'error': 'Failed to resume user'}), 500
+        
+        print(f"✅ Successfully resumed user: {user_to_resume.get('username')}")
+        
+        return jsonify({
+            'message': 'User resumed successfully',
+            'user_id': user_id
+        }), 200
+        
+    except Exception as e:
+        print(f"Resume user error: {e}")
         return jsonify({'error': str(e)}), 500
 
 # Forgot password endpoints
