@@ -132,11 +132,91 @@ def parse_date_safely(date_input):
         
         # If all parsing fails, return current datetime
         logger.warning(f"Could not parse date: {date_input}, using current datetime")
-        return datetime.now()
-        
     except Exception as e:
         logger.error(f"Error parsing date {date_input}: {e}")
         return datetime.now()
+
+@enquiry_bp.route('/enquiries', methods=['GET'])
+@jwt_required()
+def get_all_enquiries():
+    """Get all enquiries with optional filtering"""
+    try:
+        # Check if database is available
+        if db is None or enquiries_collection is None:
+            return jsonify({
+                'error': 'Database not available',
+                'enquiries': []
+            }), 500
+        
+        # Get JWT claims for user info
+        current_user_id = get_jwt_identity()
+        
+        # Get query parameters for filtering
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 50))
+        staff_filter = request.args.get('staff', '')
+        date_from = request.args.get('date_from', '')
+        date_to = request.args.get('date_to', '')
+        
+        # Build query
+        query = {}
+        
+        # Add staff filter if provided
+        if staff_filter:
+            query['staff'] = staff_filter
+        
+        # Add date range filter if provided
+        if date_from or date_to:
+            date_query = {}
+            if date_from:
+                try:
+                    date_query['$gte'] = parse_date_safely(date_from)
+                except:
+                    pass
+            if date_to:
+                try:
+                    date_query['$lte'] = parse_date_safely(date_to)
+                except:
+                    pass
+            if date_query:
+                query['date'] = date_query
+        
+        # Calculate skip for pagination
+        skip = (page - 1) * limit
+        
+        # Get total count for pagination
+        total_count = enquiries_collection.count_documents(query)
+        
+        # Get enquiries with pagination and sorting (newest first)
+        enquiries_cursor = enquiries_collection.find(query).sort('date', -1).skip(skip).limit(limit)
+        enquiries = list(enquiries_cursor)
+        
+        # Serialize enquiries for JSON response
+        serialized_enquiries = [serialize_enquiry(enquiry) for enquiry in enquiries]
+        
+        logger.info(f"Retrieved {len(serialized_enquiries)} enquiries for user {current_user_id}")
+        
+        return jsonify({
+            'enquiries': serialized_enquiries,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total_count,
+                'pages': (total_count + limit - 1) // limit
+            },
+            'filters': {
+                'staff': staff_filter,
+                'date_from': date_from,
+                'date_to': date_to
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting enquiries: {str(e)}")
+        return jsonify({
+            'error': f'Failed to get enquiries: {str(e)}',
+            'enquiries': []
+        }), 500
 
 @enquiry_bp.route('/enquiries/test', methods=['GET'])
 def test_connection():
@@ -169,6 +249,139 @@ def test_connection():
         return jsonify({
             'status': 'error',
             'message': f'Database test failed: {str(e)}'
+        }), 500
+
+@enquiry_bp.route('/enquiries/public', methods=['POST'])
+def create_public_enquiry():
+    """Create a new enquiry from public form (no JWT required)"""
+    try:
+        # Check if database is available
+        if db is None or enquiries_collection is None:
+            return jsonify({
+                'error': 'Database not available'
+            }), 500
+        
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Extract enquiry data
+        wati_name = data.get('wati_name', '')
+        mobile_number = data.get('mobile_number', '')
+        business_type = data.get('business_type', '')
+        business_nature = data.get('business_nature', '')
+        gst = data.get('gst', '')
+        
+        # Validate required fields
+        if not wati_name or not mobile_number:
+            return jsonify({'error': 'Name and mobile number are required'}), 400
+        
+        # Clean mobile number
+        clean_number = ''.join(filter(str.isdigit, mobile_number))
+        
+        # Create enquiry record
+        new_enquiry = {
+            'date': datetime.utcnow(),
+            'wati_name': wati_name,
+            'mobile_number': clean_number,
+            'secondary_mobile_number': None,
+            'gst': gst,
+            'gst_status': '',
+            'business_type': business_type,
+            'business_nature': business_nature,
+            'staff': 'Public Form',
+            'comments': 'New Enquiry - Public Form',
+            'additional_comments': '',
+            'whatsapp_status': 'pending',
+            'whatsapp_sent': False,
+            'source': 'public_form',
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow()
+        }
+        
+        # Insert into database
+        result = enquiries_collection.insert_one(new_enquiry)
+        new_enquiry['_id'] = str(result.inserted_id)
+        
+        logger.info(f"Created public enquiry for {wati_name} ({clean_number})")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Enquiry created successfully',
+            'enquiry_id': str(result.inserted_id)
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating public enquiry: {str(e)}")
+        return jsonify({
+            'error': f'Failed to create enquiry: {str(e)}'
+        }), 500
+
+@enquiry_bp.route('/enquiries/whatsapp/public-send', methods=['POST'])
+def send_public_whatsapp():
+    """Send WhatsApp message from public form (no JWT required)"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        mobile_number = data.get('mobile_number', '')
+        wati_name = data.get('wati_name', 'User')
+        
+        if not mobile_number:
+            return jsonify({'error': 'Mobile number is required'}), 400
+        
+        # Clean mobile number
+        clean_number = ''.join(filter(str.isdigit, mobile_number))
+        
+        # Check if WhatsApp service is available
+        if not whatsapp_service or not whatsapp_service.api_available:
+            return jsonify({
+                'success': False,
+                'error': 'WhatsApp service not available'
+            }), 503
+        
+        # Create welcome message
+        message = f"""Hello {wati_name}! 👋
+
+Welcome to Business Guru! We're delighted to have you with us. 
+
+At Business Guru, we specialize in providing collateral-free loans to help businesses like yours grow and thrive. Our team of financial experts is ready to assist you with personalized loan solutions tailored to your business needs.
+
+We'll be contacting you shortly to discuss your requirements in detail and guide you through our simple application process.
+
+Please reply with one of these options:
+• Get Loan
+• Check Eligibility  
+• More Details
+
+Thank you for choosing Business Guru! 🚀"""
+        
+        # Send WhatsApp message
+        chat_id = f"{clean_number}@c.us"
+        result = whatsapp_service.send_message(chat_id, message)
+        
+        if result['success']:
+            logger.info(f"Public WhatsApp message sent to {clean_number}")
+            return jsonify({
+                'success': True,
+                'message': 'WhatsApp message sent successfully',
+                'message_id': result.get('message_id', '')
+            }), 200
+        else:
+            logger.error(f"Failed to send public WhatsApp message to {clean_number}: {result.get('error')}")
+            return jsonify({
+                'success': False,
+                'error': result.get('error', 'Failed to send message')
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error sending public WhatsApp message: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Failed to send message: {str(e)}'
         }), 500
 
 @enquiry_bp.route('/enquiries/whatsapp/webhook', methods=['GET', 'POST'])
