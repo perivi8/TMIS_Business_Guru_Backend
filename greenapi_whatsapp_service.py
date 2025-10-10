@@ -295,6 +295,8 @@ Get ₹10 Lakhs in 24 hours for your business:
 
 ✅ New startups welcome
 
+Apply Now: https://tmis-business-guru.vercel.app/new-enquiry
+
 ✨ Special Benefits:
 
 - 0% processing fees (First 50 applicants)
@@ -302,6 +304,9 @@ Get ₹10 Lakhs in 24 hours for your business:
 - Flexible repayment: 1-5 years
 
 🏆 Trusted by 2,500+ businesses
+
+📱 Ready to grow?
+Apply Now: https://tmis-business-guru.vercel.app/new-enquiry
 
 Your success journey begins now! 🚀
 
@@ -586,19 +591,42 @@ Working Hours : 10.00AM - 6.00PM"""
             
             result = self.send_message(mobile_number, formatted_message)
             
-            # Log the activity
+            # Log the activity with more detail
             if result['success']:
-                logger.info(f"Sent {message_type} message to {enquiry_data.get('wati_name')} at {mobile_number}")
+                logger.info(f"✅ SUCCESS: Sent {message_type} message to {enquiry_data.get('wati_name')} at {mobile_number}")
+                logger.info(f"   Message ID: {result.get('message_id', 'N/A')}")
+                logger.info(f"   Service: {result.get('service', 'Unknown')}")
                 # Add success notification
                 result['notification'] = f"✅ WhatsApp message sent successfully to {enquiry_data.get('wati_name')}"
             else:
-                logger.error(f"Failed to send {message_type} message to {mobile_number}: {result.get('error')}")
+                error_msg = result.get('error', 'Unknown error')
+                status_code = result.get('status_code', 'N/A')
+                logger.error(f"❌ FAILED: Send {message_type} message to {mobile_number}")
+                logger.error(f"   Status Code: {status_code}")
+                logger.error(f"   Error: {error_msg}")
+                logger.error(f"   Original Number: {result.get('original_phone_number', 'N/A')}")
+                logger.error(f"   Formatted Number: {result.get('formatted_phone_number', 'N/A')}")
+                
                 # Check for quota exceeded error
-                if result.get('status_code') == 466 or result.get('quota_exceeded') or 'quota exceeded' in result.get('error', '').lower() or 'monthly quota' in result.get('error', '').lower():
+                quota_exceeded = (
+                    result.get('status_code') == 466 or 
+                    result.get('quota_exceeded') or 
+                    'quota exceeded' in error_msg.lower() or 
+                    'monthly quota' in error_msg.lower() or
+                    'limit reached' in error_msg.lower()
+                )
+                
+                if quota_exceeded:
+                    logger.warning(f"🚨 GREENAPI QUOTA LIMIT REACHED!")
+                    logger.warning(f"   Monthly quota has been exceeded for instance {self.instance_id}")
+                    logger.warning(f"   Test number {result.get('working_test_number', '8106811285')} still works")
+                    logger.warning(f"   Solution: Upgrade at {result.get('upgrade_url', 'https://console.green-api.com')}")
                     result['notification'] = f"🚨 GreenAPI monthly quota exceeded! Test number {result.get('working_test_number', '8106811285')} still works. Upgrade at {result.get('upgrade_url', 'https://console.green-api.com')}"
                     result['quota_exceeded'] = True
                     result['working_test_number'] = '8106811285'
                     result['upgrade_url'] = 'https://console.green-api.com'
+                else:
+                    result['notification'] = f"❌ Failed to send WhatsApp message: {error_msg}"
             
             # Add helpful information for quota exceeded cases
             if result.get('quota_exceeded'):

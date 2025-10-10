@@ -712,6 +712,117 @@ def _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
             logger.info(f"   Mobile: {clean_number}")
             logger.info(f"   WhatsApp Name: {sender_name}")
             
+            # Send welcome message
+            if whatsapp_service and whatsapp_service.api_available:
+                try:
+                    logger.info(f"📤 Sending welcome message to {display_name} ({clean_number})...")
+                    welcome_message_result = whatsapp_service.send_enquiry_message(new_enquiry, 'new_enquiry')
+                    if welcome_message_result['success']:
+                        logger.info(f"✅ Welcome message sent successfully to {chat_id}")
+                        logger.info(f"   Message ID: {welcome_message_result.get('message_id', 'N/A')}")
+                        # Update enquiry to mark welcome message as sent
+                        new_enquiry['whatsapp_sent'] = True
+                        enquiries_collection.update_one(
+                            {'_id': result.inserted_id},
+                            {'$set': {'whatsapp_sent': True, 'updated_at': datetime.utcnow()}}
+                        )
+                        
+                        # Emit success notification
+                        try:
+                            from app import socketio
+                            notification = {
+                                'type': 'webhook_status',
+                                'status': 'success',
+                                'message': f"✅ WhatsApp welcome message sent successfully to {display_name}",
+                                'details': {
+                                    'message_type': 'welcome_message',
+                                    'recipient': chat_id,
+                                    'message_id': welcome_message_result.get('message_id', 'unknown'),
+                                    'enquiry_id': str(result.inserted_id)
+                                },
+                                'timestamp': datetime.utcnow().isoformat()
+                            }
+                            socketio.emit('webhook_notification', notification)
+                        except Exception as socket_error:
+                            logger.error(f"❌ Error emitting socket event: {socket_error}")
+                    else:
+                        error_msg = welcome_message_result.get('error', 'Unknown error')
+                        logger.error(f"❌ Failed to send welcome message to {chat_id}: {error_msg}")
+                        
+                        # Check for quota exceeded error
+                        quota_exceeded = (
+                            welcome_message_result.get('status_code') == 466 or 
+                            welcome_message_result.get('quota_exceeded') or 
+                            'quota exceeded' in error_msg.lower() or 
+                            'monthly quota' in error_msg.lower()
+                        )
+                        
+                        if quota_exceeded:
+                            logger.warning(f"🚨 GreenAPI QUOTA LIMIT REACHED for {chat_id}")
+                            logger.warning(f"   Error details: {error_msg}")
+                            logger.warning(f"   Test number {welcome_message_result.get('working_test_number', '8106811285')} still works")
+                            logger.warning(f"   Solution: Upgrade at {welcome_message_result.get('upgrade_url', 'https://console.green-api.com')}")
+                            
+                            # Emit quota exceeded notification
+                            try:
+                                from app import socketio
+                                notification = {
+                                    'type': 'webhook_status',
+                                    'status': 'warning',
+                                    'message': f"⚠️ GreenAPI quota limit reached! Welcome message not sent to {display_name}",
+                                    'details': {
+                                        'message_type': 'welcome_message',
+                                        'recipient': chat_id,
+                                        'error': error_msg,
+                                        'quota_exceeded': True,
+                                        'working_test_number': welcome_message_result.get('working_test_number', '8106811285'),
+                                        'upgrade_url': welcome_message_result.get('upgrade_url', 'https://console.green-api.com'),
+                                        'enquiry_id': str(result.inserted_id)
+                                    },
+                                    'timestamp': datetime.utcnow().isoformat()
+                                }
+                                socketio.emit('webhook_notification', notification)
+                            except Exception as socket_error:
+                                logger.error(f"❌ Error emitting socket event: {socket_error}")
+                        else:
+                            # Emit general error notification
+                            try:
+                                from app import socketio
+                                notification = {
+                                    'type': 'webhook_status',
+                                    'status': 'error',
+                                    'message': f"❌ Failed to send WhatsApp welcome message to {display_name}: {error_msg}",
+                                    'details': {
+                                        'message_type': 'welcome_message',
+                                        'recipient': chat_id,
+                                        'error': error_msg,
+                                        'enquiry_id': str(result.inserted_id)
+                                    },
+                                    'timestamp': datetime.utcnow().isoformat()
+                                }
+                                socketio.emit('webhook_notification', notification)
+                            except Exception as socket_error:
+                                logger.error(f"❌ Error emitting socket event: {socket_error}")
+                except Exception as welcome_error:
+                    logger.error(f"❌ Error sending welcome message: {str(welcome_error)}")
+                    # Emit exception notification
+                    try:
+                        from app import socketio
+                        notification = {
+                            'type': 'webhook_status',
+                            'status': 'error',
+                            'message': f"❌ Exception while sending WhatsApp welcome message to {display_name}: {str(welcome_error)}",
+                            'details': {
+                                'message_type': 'welcome_message',
+                                'recipient': chat_id,
+                                'error': str(welcome_error),
+                                'enquiry_id': str(result.inserted_id)
+                            },
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                        socketio.emit('webhook_notification', notification)
+                    except Exception as socket_error:
+                        logger.error(f"❌ Error emitting socket event: {socket_error}")
             # Emit socket event to notify frontend with comprehensive status
             try:
                 from app import socketio

@@ -46,7 +46,8 @@ allowed_origins = [
     "http://localhost:4200", 
     "http://localhost:4201", 
     "https://tmis-business-guru.vercel.app",
-    "https://tmis-business-guru-frontend.vercel.app"
+    "https://tmis-business-guru-frontend.vercel.app",
+    "https://tmis-business-guru-backend.onrender.com"
 ]
 
 # Add any additional origins from environment variable
