@@ -1438,19 +1438,59 @@ def handle_incoming_whatsapp():
                 'message': 'No message text found'
             }), 200
         
-        # Check if this is the "I am interested" message
-        is_interested = _is_interested_message(message_text)
-        logger.info(f"🔍 Is interested message: {is_interested}")
+        # Log the exact message text for debugging
+        logger.info(f"🔍 Raw message text: '{message_text}'")
+        logger.info(f"🔍 Message text length: {len(message_text)}")
+        logger.info(f"🔍 Message text repr: {repr(message_text)}")
         
-        if is_interested:
-            logger.info(f"✅ Processing interested message from {sender_name or chat_id}: {message_text}")
-            return _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
-        else:
-            logger.info(f"📥 Received WhatsApp message but not 'interested' message: {message_text}")
+        # Check if this is one of our reply options
+        is_reply_option = _is_reply_option(message_text)
+        logger.info(f"🔍 Is reply option: {is_reply_option}")
+        
+        # Check if this is one of our reply options
+        if _is_reply_option(message_text):
+            logger.info(f"🔄 Processing reply option from {data.get('senderName', '') or chat_id}: {message_text}")
+            # Send appropriate response
+            response_text = _get_reply_response(message_text)
+            if whatsapp_service and whatsapp_service.api_available:
+                # Use the proper method to send the message
+                logger.info(f"📤 Sending reply message: {response_text}")
+                result = whatsapp_service.send_message(chat_id, response_text)
+                if result['success']:
+                    logger.info(f"✅ Reply sent for option '{message_text}' to {chat_id}")
+                else:
+                    logger.error(f"❌ Failed to send reply for option '{message_text}' to {chat_id}: {result.get('error')}")
+                    # Log additional error details
+                    logger.error(f"❌ Error details: {result}")
+                    
+                    # Check for quota exceeded error
+                    error_msg = result.get('error', '').lower()
+                    status_code = result.get('status_code', 0)
+                    
+                    if 'quota exceeded' in error_msg or 'monthly quota' in error_msg or status_code == 466:
+                        logger.warning(f"⚠️ GreenAPI quota exceeded when sending reply to {chat_id}")
+                        # Still return success to the webhook (we don't want to cause webhook errors)
+                        # but log the quota issue
+            else:
+                logger.error("❌ WhatsApp service not available")
             return jsonify({
                 'success': True,
-                'message': 'Message received but not processed as enquiry'
+                'message': 'Reply option processed'
             }), 200
+        # Check if this is the "I am interested" message
+        else:
+            is_interested = _is_interested_message(message_text)
+            logger.info(f"🔍 Is interested message: {is_interested}")
+            
+            if is_interested:
+                logger.info(f"✅ Processing interested message from {sender_name or chat_id}: {message_text}")
+                return _create_enquiry_from_message(chat_id, message_text, sender_name, message_id)
+            else:
+                logger.info(f"📥 Received WhatsApp message but not 'interested' message: {message_text}")
+                return jsonify({
+                    'success': True,
+                    'message': 'Message received but not processed as enquiry'
+                }), 200
         
     except Exception as e:
         logger.error(f"❌ Error handling incoming WhatsApp message: {str(e)}")
@@ -1628,37 +1668,9 @@ def _extract_message_info(data):
                 
             result['has_message_data'] = bool(result['message_text'])
             
-        # Format 6: Alternative format with text directly in data
-            logger.info("📦 Processing Format 4: Direct text format")
-            result['message_text'] = data.get('text', '')
-            result['message_id'] = data.get('idMessage', '')
-            
-            sender_data = data.get('senderData', {})
-            if isinstance(sender_data, dict):
-                result['chat_id'] = sender_data.get('chatId', '')
-                
-                # Try multiple fields for sender name with priority order
-                sender_name_options = [
-                    sender_data.get('senderName', ''),
-                    sender_data.get('chatName', ''),
-                    sender_data.get('pushName', ''),  # WhatsApp push name
-                    sender_data.get('notifyName', '')  # WhatsApp notify name
-                ]
-                
-                # Use the first non-empty name
-                for name_option in sender_name_options:
-                    if name_option and name_option.strip():
-                        result['sender_name'] = name_option.strip()
-                        break
-                        
-                logger.info(f"📋 Sender data fields: {list(sender_data.keys())}")
-                logger.info(f"📋 Selected sender name: '{result['sender_name']}'")
-                
-            result['has_message_data'] = bool(result['message_text'])
-            
-        # Format 5: State change or other notifications (no message data)
+        # Format 6: State change or other notifications (no message data)
         elif data.get('typeWebhook') and 'message' not in data and 'messageData' not in data:
-            logger.info("📦 Processing Format 5: Non-message event")
+            logger.info("📦 Processing Format 6: Non-message event")
             # This is likely a state change or other notification, not a message
             result['has_message_data'] = False
             
@@ -1679,6 +1691,55 @@ def _is_interested_message(message_text):
     text_lower = message_text.lower()
     return "i am interested" in text_lower or "interested" in text_lower or "i'm interested" in text_lower
 
+def _is_reply_option(message_text):
+    """Check if the message is one of the reply options"""
+    if not message_text:
+        return False
+    # Normalize the text for comparison
+    text_normalized = message_text.lower().strip()
+    logger.info(f"🔍 Checking if '{message_text}' is a reply option (normalized: '{text_normalized}')")
+    
+    reply_options = ['get loan', 'check eligibility', 'more details']
+    is_reply = text_normalized in reply_options
+    
+    logger.info(f"🔍 Is reply option: {is_reply}")
+    if is_reply:
+        logger.info(f"🔍 Matched reply option: {text_normalized}")
+    
+    return is_reply
+
+def _get_reply_response(message_text):
+    """Get the appropriate response for reply options"""
+    text_lower = message_text.lower().strip()
+    
+    responses = {
+        'get loan': """Business Guru is banking associate for loans especially business loans.
+
+We provide collateral free loans based on turnover for all kinds of business without considering CIBIL scores of the customer/business""",
+        
+        'check eligibility': """📋 Documents Needed for Eligibility Check 
+Please share:  
+1️⃣ Business Registration  
+2️⃣ GST Certificate  
+3️⃣ Company Bank Details  
+4️⃣ 6-12 Month Bank Statements  
+5️⃣ Website URL  
+6️⃣ Owner PAN + Aadhaar  
+7️⃣ Business PAN  
+8️⃣ Email & Mobile  
+- IE Code (Imports/Exports)  
+- Intl. Payment Gateway 
+- Send photos/PDFs one-by-one  
+We'll verify within 4 hours!""",
+        
+        'more details': """Welcome to Business Guru! We're delighted to have you with us. At Business Guru, we specialize in providing collateral loans to help businesses like yours grow and thrive. Our team of financial experts is ready to assist you with personalized loan solutions tailored to your business needs. We'll be contacting you shortly to discuss your requirements in detail and guide you through our simple application process. 
+
+
+"""
+    }
+    
+    return responses.get(text_lower, "I didn't understand that. Please reply with one of these options: Get Loan, Check Eligibility, or More Details")
+
 def _process_incoming_message(data):
     """Process incoming message data"""
     try:
@@ -1689,8 +1750,25 @@ def _process_incoming_message(data):
         sender_number = chat_id.replace('@c.us', '')  # Remove @c.us suffix
         message_text = message_data.get('textMessage', {}).get('text', '')
         
+        # Check if this is one of our reply options
+        if _is_reply_option(message_text):
+            logger.info(f"🔄 Processing reply option from {data.get('senderName', '') or chat_id}: {message_text}")
+            # Send appropriate response
+            response_text = _get_reply_response(message_text)
+            if whatsapp_service and whatsapp_service.api_available:
+                # Format the phone number properly for GreenAPI
+                formatted_number = chat_id  # chat_id already includes @c.us suffix
+                result = whatsapp_service.send_message(formatted_number, response_text)
+                if result['success']:
+                    logger.info(f"✅ Reply sent for option '{message_text}' to {chat_id}")
+                else:
+                    logger.error(f"❌ Failed to send reply for option '{message_text}' to {chat_id}: {result.get('error')}")
+            return jsonify({
+                'success': True,
+                'message': 'Reply option processed'
+            }), 200
         # Check if this is the "I am interested" message
-        if _is_interested_message(message_text):
+        elif _is_interested_message(message_text):
             return _create_enquiry_from_message(chat_id, message_text, data.get('senderName', ''), message_data.get('idMessage', ''))
         else:
             logger.info(f"📥 Received WhatsApp message but not 'interested' message: {message_text}")
@@ -1959,6 +2037,282 @@ def public_send_whatsapp():
                 return jsonify({
                     'success': True,
                     'message': 'Enquiry created successfully',
+                    'enquiry_id': new_enquiry['_id']
+                }), 200
+            else:
+                logger.error("❌ Database not available for enquiry creation")
+                return jsonify({
+                    'success': False,
+                    'error': 'Database not available'
+                }), 500
+        else:
+            # If service is available, send the message and create the enquiry
+            logger.info("WhatsApp service available, sending message and creating enquiry")
+            
+            # Send the message
+            result = whatsapp_service.send_message(mobile_number, 'New Enquiry - Interested')
+            if result['success']:
+                logger.info(f"✅ Message sent to {mobile_number}")
+                
+                # Create a new enquiry record
+                new_enquiry = {
+                    'date': datetime.utcnow(),
+                    'wati_name': wati_name,
+                    'mobile_number': mobile_number,
+                    'gst': '',
+                    'business_type': '',
+                    'business_nature': '',
+                    'staff': '',
+                    'comments': 'New Enquiry - Interested',
+                    'additional_comments': '',
+                    'whatsapp_status': 'sent',
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                # Insert into database
+                if enquiries_collection is not None:
+                    result = enquiries_collection.insert_one(new_enquiry)
+                    new_enquiry['_id'] = str(result.inserted_id)
+                    
+                    logger.info(f"✅ New public enquiry created: {new_enquiry['_id']}")
+                    
+                    # Emit socket event to notify frontend
+                    try:
+                        from app import socketio
+                        socketio.emit('new_enquiry', new_enquiry)
+                    except Exception as socket_error:
+                        logger.error(f"❌ Error emitting socket event: {socket_error}")
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': 'Enquiry created successfully',
+                        'enquiry_id': new_enquiry['_id']
+                    }), 200
+                else:
+                    logger.error("❌ Database not available for enquiry creation")
+                    return jsonify({
+                        'success': False,
+                        'error': 'Database not available'
+                    }), 500
+            else:
+                logger.error(f"❌ Failed to send message to {mobile_number}: {result.get('error')}")
+                return jsonify({
+                    'success': False,
+                    'error': f'Failed to send message: {result.get("error")}'
+                }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ Error sending public WhatsApp message: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Error sending message: {str(e)}'
+        }), 500
+
+@enquiry_bp.route('/whatsapp/webhook', methods=['POST'])
+def whatsapp_webhook():
+    """Handle incoming WhatsApp messages"""
+    try:
+        data = request.get_json()
+        logger.info(f"Received WhatsApp webhook data: {data}")
+        
+        if not data or 'message' not in data:
+            return jsonify({'error': 'Invalid webhook data'}), 400
+        
+        message = data['message']
+        chat_id = data['chatId']
+        message_text = message.get('text', '')
+        sender_name = data.get('senderName', '')
+        display_name = sender_name or chat_id
+        
+        # Check if this is one of our reply options
+        if _is_reply_option(message_text):
+            logger.info(f"🔄 Processing reply option from {data.get('senderName', '') or chat_id}: {message_text}")
+            # Send appropriate response
+            response_text = _get_reply_response(message_text)
+            if whatsapp_service and whatsapp_service.api_available:
+                # Use the proper method to send the message
+                logger.info(f"📤 Sending reply message: {response_text}")
+                result = whatsapp_service.send_message(chat_id, response_text)
+                if result['success']:
+                    logger.info(f"✅ Reply sent for option '{message_text}' to {chat_id}")
+                    # Emit success notification
+                    try:
+                        from app import socketio
+                        notification = {
+                            'type': 'webhook_status',
+                            'status': 'success',
+                            'message': f"✅ WhatsApp reply sent successfully for '{message_text}'",
+                            'details': {
+                                'message_type': 'reply_option',
+                                'option_selected': message_text,
+                                'recipient': chat_id,
+                                'message_id': result.get('message_id', 'unknown')
+                            },
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                        socketio.emit('webhook_notification', notification)
+                    except Exception as socket_error:
+                        logger.error(f"❌ Error emitting socket event: {socket_error}")
+                else:
+                    logger.error(f"❌ Failed to send reply for option '{message_text}' to {chat_id}: {result.get('error')}")
+                    # Log additional error details
+                    logger.error(f"❌ Error details: {result}")
+                    
+                    # Emit error notification
+                    try:
+                        from app import socketio
+                        notification = {
+                            'type': 'webhook_status',
+                            'status': 'error',
+                            'message': f"❌ Failed to send WhatsApp reply for '{message_text}': {result.get('error', 'Unknown error')}",
+                            'details': {
+                                'message_type': 'reply_option',
+                                'option_selected': message_text,
+                                'recipient': chat_id,
+                                'error': result.get('error', 'Unknown error')
+                            },
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                        socketio.emit('webhook_notification', notification)
+                    except Exception as socket_error:
+                        logger.error(f"❌ Error emitting socket event: {socket_error}")
+                    
+                    # Check for quota exceeded error
+                    error_msg = result.get('error', '').lower()
+                    status_code = result.get('status_code', 0)
+                    
+                    if 'quota exceeded' in error_msg or 'monthly quota' in error_msg or status_code == 466:
+                        logger.warning(f"⚠️ GreenAPI quota exceeded when sending reply to {chat_id}")
+                        # Still return success to the webhook (we don't want to cause webhook errors)
+                        # but log the quota issue
+            else:
+                logger.error("❌ WhatsApp service not available")
+                # Emit service unavailable notification
+                try:
+                    from app import socketio
+                    notification = {
+                        'type': 'webhook_status',
+                        'status': 'error',
+                        'message': "❌ WhatsApp service not available - Check GreenAPI configuration",
+                        'details': {
+                            'message_type': 'reply_option',
+                            'option_selected': message_text,
+                            'recipient': chat_id,
+                            'error': 'Service not available'
+                        },
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                    socketio.emit('webhook_notification', notification)
+                except Exception as socket_error:
+                    logger.error(f"❌ Error emitting socket event: {socket_error}")
+            return jsonify({
+                'success': True,
+                'message': 'Reply option processed'
+            }), 200
+        
+        # Create enquiry data
+        enquiry_data = {
+            'wati_name': sender_name,
+            'user_name': sender_name,
+            'mobile_number': chat_id,
+            'comments': message_text,
+            'staff': '',
+            'source': 'WhatsApp',
+            'whatsapp_sender_name': sender_name,
+            'created_at': datetime.utcnow(),
+            'date': datetime.utcnow()
+        }
+        
+        # Check if database is available
+        if enquiries_collection is not None:
+            try:
+                # Insert into database
+                result = enquiries_collection.insert_one(enquiry_data)
+                new_enquiry = result.inserted_id
+                
+                logger.info(f"✅ New WhatsApp enquiry created: {new_enquiry}")
+                
+                # Emit socket event to notify frontend
+                try:
+                    from app import socketio
+                    socketio.emit('new_enquiry', enquiry_data)
+                except Exception as socket_error:
+                    logger.error(f"❌ Error emitting socket event: {socket_error}")
+                
+                # Determine the status message based on data availability
+                if sender_name and sender_name.strip() and sender_name.strip() != 'null':
+                    status_message = "✅ SUCCESS: WhatsApp enquiry created with full details"
+                    status_type = "success"
+                else:
+                    status_message = "⚠️ PARTIAL SUCCESS: Enquiry created but sender name not available (Free GreenAPI plan limitation)"
+                    status_type = "warning"
+                
+                # Serialize the enquiry for socket emission
+                socket_data = {
+                    '_id': new_enquiry['_id'],
+                    'wati_name': new_enquiry['wati_name'],
+                    'user_name': new_enquiry['user_name'],
+                    'mobile_number': new_enquiry['mobile_number'],
+                    'comments': new_enquiry['comments'],
+                    'staff': new_enquiry['staff'],
+                    'source': new_enquiry['source'],
+                    'whatsapp_sender_name': new_enquiry['whatsapp_sender_name'],
+                    'created_at': new_enquiry['created_at'].isoformat(),
+                    'date': new_enquiry['date'].isoformat()
+                }
+                
+                # Emit enquiry creation event
+                socketio.emit('new_enquiry', socket_data)
+                
+                # Emit status notification
+                status_notification = {
+                    'type': 'webhook_status',
+                    'status': status_type,
+                    'message': status_message,
+                    'details': {
+                        'mobile_number': clean_number,
+                        'sender_name_available': bool(sender_name and sender_name.strip() and sender_name.strip() != 'null'),
+                        'greenapi_plan': 'free',
+                        'whatsapp_account_type': 'normal',
+                        'enquiry_created': True,
+                        'enquiry_id': new_enquiry['_id']
+                    },
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                
+                socketio.emit('webhook_notification', status_notification)
+                logger.info(f"📡 Socket events emitted for new WhatsApp enquiry with status: {status_type}")
+                
+            except Exception as socket_error:
+                logger.error(f"❌ Error emitting socket event: {socket_error}")
+                
+                # Even if socket fails, emit a basic notification
+                try:
+                    from app import socketio
+                    error_notification = {
+                        'type': 'webhook_status',
+                        'status': 'error',
+                        'message': f"❌ ERROR: Enquiry created but notification failed: {str(socket_error)}",
+                        'details': {
+                            'mobile_number': clean_number,
+                            'enquiry_created': True,
+                            'notification_error': str(socket_error)
+                        },
+                        'timestamp': datetime.utcnow().isoformat()
+                    }
+                    socketio.emit('webhook_notification', error_notification)
+                except:
+                    pass  # If even this fails, just log it
+            
+            return jsonify({
+                'success': True,
+                'message': 'WhatsApp enquiry created successfully',
+                'enquiry_id': new_enquiry['_id'],
+                'customer_name': display_name,
+                'mobile_number': clean_number,
+                'whatsapp_name': sender_name
+            }), 200
                     'enquiry_id': new_enquiry['_id'],
                     'whatsapp_redirect': True
                 }), 200

@@ -285,11 +285,33 @@ class GreenAPIWhatsAppService:
             Dict: Dictionary of template names and messages
         """
         return {
-            'new_enquiry': """Hii {wati_name} sir/madam! 👋
+            'new_enquiry': """Hi {wati_name}👋 Welcome to Business Guru Loans!
 
-Welcome to Business Guru! We're delighted to have you with us. At Business Guru, we specialize in providing collateral loans to help businesses like yours grow and thrive. Our team of financial experts is ready to assist you with personalized loan solutions tailored to your business needs. We'll be contacting you shortly to discuss your requirements in detail and guide you through our simple application process. 
+Get ₹10 Lakhs in 24 hours for your business:
 
-Thank you for choosing Business Guru! We look forward to supporting your business journey. 🙏✨""",
+✅ 1% monthly interest (Lowest in market!)
+
+✅ Zero collateral or CIBIL checks
+
+✅ New startups welcome
+
+✨ Special Benefits:
+
+- 0% processing fees (First 50 applicants)
+
+- Flexible repayment: 1-5 years
+
+🏆 Trusted by 2,500+ businesses
+
+Your success journey begins now! 🚀
+
+*Please click on any option below:*
+
+🔗 Get Loan: https://wa.me/918106811285?text=Get%20Loan
+
+🔗 Check Eligibility: https://wa.me/918106811285?text=Check%20Eligibility
+
+🔗 More Details: https://wa.me/918106811285?text=More%20Details""",
             
             'no_gst': """Hii {wati_name} sir/madam! 🙏
 
