@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from pymongo import MongoClient
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import logging
 import time
@@ -191,13 +191,41 @@ def get_all_enquiries():
         enquiries_cursor = enquiries_collection.find(query).sort('date', -1).skip(skip).limit(limit)
         enquiries = list(enquiries_cursor)
         
-        # Serialize enquiries for JSON response
-        serialized_enquiries = [serialize_enquiry(enquiry) for enquiry in enquiries]
+        # Check staff assignment lock status
+        staff_lock_status = check_staff_assignment_lock_status()
+        
+        # Serialize enquiries for JSON response and add staff lock info
+        serialized_enquiries = []
+        for enquiry in enquiries:
+            serialized_enquiry = serialize_enquiry(enquiry)
+            
+            # Add comprehensive staff dropdown status for frontend
+            dropdown_status = get_enquiry_staff_dropdown_status(enquiry, staff_lock_status)
+            
+            # Add all status fields for frontend use
+            serialized_enquiry['staff_assignment_locked'] = staff_lock_status['locked']
+            serialized_enquiry['can_assign_staff'] = dropdown_status['can_assign']
+            serialized_enquiry['staff_dropdown_enabled'] = dropdown_status['enabled']
+            serialized_enquiry['staff_dropdown_clickable'] = dropdown_status['clickable']
+            serialized_enquiry['staff_dropdown_reason'] = dropdown_status['reason']
+            serialized_enquiry['staff_dropdown_ui_state'] = dropdown_status['ui_state']
+            
+            # Add enquiry age info for frontend reference
+            enquiry_date = enquiry.get('date', datetime.utcnow())
+            if isinstance(enquiry_date, str):
+                enquiry_date = parse_date_safely(enquiry_date)
+            
+            one_day_ago = datetime.utcnow() - timedelta(days=1)
+            serialized_enquiry['is_old_enquiry'] = enquiry_date < one_day_ago
+            serialized_enquiry['enquiry_age_days'] = (datetime.utcnow() - enquiry_date).days
+            
+            serialized_enquiries.append(serialized_enquiry)
         
         logger.info(f"Retrieved {len(serialized_enquiries)} enquiries for user {current_user_id}")
         
         return jsonify({
             'enquiries': serialized_enquiries,
+            'staff_lock_status': staff_lock_status,
             'pagination': {
                 'page': page,
                 'limit': limit,
@@ -1211,17 +1239,30 @@ def update_enquiry(enquiry_id):
         if not existing_enquiry:
             return jsonify({'error': 'Enquiry not found'}), 404
         
-        # Check if staff is already assigned and locked
-        # Allow editing if staff is "Public Form" or "WhatsApp Form" regardless of lock status
-        current_staff = existing_enquiry.get('staff', '')
-        is_public_or_whatsapp_form = current_staff in ['Public Form', 'WhatsApp Form', 'WhatsApp Bot']
-        
-        if existing_enquiry.get('staff_locked', False) and 'staff' in data and not is_public_or_whatsapp_form:
-            old_staff = existing_enquiry.get('staff', '')
+        # Check if staff assignment is allowed based on business rules
+        if 'staff' in data:
             new_staff = data['staff']
-            # Only allow staff changes if it's the same staff member or if staff is being cleared
-            if new_staff and new_staff.strip() != '' and new_staff != old_staff:
-                return jsonify({'error': 'Staff assignment is locked. Cannot change assigned staff member.'}), 400
+            current_staff = existing_enquiry.get('staff', '')
+            is_public_or_whatsapp_form = current_staff in ['Public Form', 'WhatsApp Form', 'WhatsApp Bot']
+            
+            # If trying to assign actual staff (not clearing or public/whatsapp forms)
+            if new_staff and new_staff.strip() not in ['', 'Public Form', 'WhatsApp Form', 'WhatsApp Bot']:
+                # Check if staff assignment is allowed for this enquiry
+                if not can_assign_staff_to_enquiry(existing_enquiry):
+                    staff_lock_status = check_staff_assignment_lock_status()
+                    if staff_lock_status['locked']:
+                        return jsonify({
+                            'error': 'Staff assignment is currently locked. Please assign staff to old enquiries first.',
+                            'reason': staff_lock_status['reason'],
+                            'staff_lock_status': staff_lock_status
+                        }), 400
+            
+            # Check if staff is already assigned and locked (existing logic)
+            if existing_enquiry.get('staff_locked', False) and not is_public_or_whatsapp_form:
+                old_staff = existing_enquiry.get('staff', '')
+                # Only allow staff changes if it's the same staff member or if staff is being cleared
+                if new_staff and new_staff.strip() != '' and new_staff != old_staff:
+                    return jsonify({'error': 'Staff assignment is locked. Cannot change assigned staff member.'}), 400
         
         # Validate mobile numbers if provided (accept 10-15 digits with country code)
         if 'mobile_number' in data:
@@ -1285,6 +1326,9 @@ def update_enquiry(enquiry_id):
                 # Lock the staff assignment
                 update_doc['staff_locked'] = True
                 logger.info(f"Staff assigned: {new_staff}. Locking staff assignment.")
+                
+                # Log staff assignment for tracking
+                logger.info(f"Staff assignment completed for enquiry {enquiry_id}. This may unlock staff assignments for new enquiries.")
             elif new_staff and new_staff.strip() in ['Public Form', 'WhatsApp Form', 'WhatsApp Bot']:
                 # Keep unlocked for public/whatsapp forms
                 update_doc['staff_locked'] = False
@@ -1403,9 +1447,13 @@ def update_enquiry(enquiry_id):
                             # Add notification
                             serialized_enquiry['whatsapp_notification'] = whatsapp_result.get('notification', 'WhatsApp staff assignment messages sent successfully')
                             
-                            # Remove staff locking - allow staff to be reassigned to other enquiries
-                            # Do not lock the staff assignment
-                            logger.info(f"Staff assignment completed for enquiry {enquiry_id} - staff not locked")
+                            # Staff assignment completed - this may unlock staff assignments for other enquiries
+                            logger.info(f"Staff assignment completed for enquiry {enquiry_id} - checking if this unlocks other assignments")
+                            
+                            # Check updated lock status after this assignment
+                            updated_lock_status = check_staff_assignment_lock_status()
+                            if not updated_lock_status['locked']:
+                                logger.info(f"Staff assignments are now unlocked for new enquiries due to this assignment")
                         else:
                             error_msg = whatsapp_result.get('error', 'Unknown error')
                             logger.warning(f"Failed to send staff assignment messages: {error_msg}")
@@ -1438,6 +1486,189 @@ def update_enquiry(enquiry_id):
     except Exception as e:
         logger.error(f"Error updating enquiry {enquiry_id}: {e}")
         return jsonify({'error': 'Failed to update enquiry'}), 500
+
+@enquiry_bp.route('/enquiries/staff-lock-status', methods=['GET'])
+@jwt_required()
+def get_staff_lock_status():
+    """Get current staff assignment lock status"""
+    try:
+        # Check if database is available
+        if db is None or enquiries_collection is None:
+            return jsonify({'error': 'Database not available'}), 500
+        
+        staff_lock_status = check_staff_assignment_lock_status()
+        return jsonify(staff_lock_status), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting staff lock status: {str(e)}")
+        return jsonify({'error': f'Failed to get staff lock status: {str(e)}'}), 500
+
+def check_staff_assignment_lock_status():
+    """Check if staff assignments should be locked based on business rules"""
+    try:
+        if db is None or enquiries_collection is None:
+            return {
+                'locked': False,
+                'reason': 'Database not available',
+                'unassigned_old_enquiries': 0,
+                'assigned_enquiries': 0
+            }
+        
+        # Count old enquiries without staff assignment
+        # Consider enquiries older than 1 day as "old"
+        one_day_ago = datetime.utcnow() - timedelta(days=1)
+        
+        old_unassigned_query = {
+            'date': {'$lt': one_day_ago},
+            '$or': [
+                {'staff': {'$exists': False}},
+                {'staff': None},
+                {'staff': ''},
+                {'staff': 'Public Form'},
+                {'staff': 'WhatsApp Bot'},
+                {'staff': 'WhatsApp Form'}
+            ]
+        }
+        
+        unassigned_old_count = enquiries_collection.count_documents(old_unassigned_query)
+        
+        # Count enquiries with actual staff assignments (not public/whatsapp forms)
+        assigned_query = {
+            'staff': {
+                '$exists': True,
+                '$nin': [None, '', 'Public Form', 'WhatsApp Bot', 'WhatsApp Form']
+            }
+        }
+        
+        assigned_count = enquiries_collection.count_documents(assigned_query)
+        
+        # Staff assignments are locked if there are old unassigned enquiries
+        # and no staff has been assigned to any enquiry yet
+        locked = unassigned_old_count > 0 and assigned_count == 0
+        
+        reason = ''
+        if locked:
+            reason = f'Staff assignments locked: {unassigned_old_count} old enquiries without staff assignment. Assign staff to an old enquiry first to unlock.'
+        elif unassigned_old_count > 0 and assigned_count > 0:
+            reason = f'Staff assignments unlocked: {assigned_count} enquiries have staff assigned.'
+        else:
+            reason = 'No restrictions on staff assignments.'
+        
+        logger.info(f"Staff lock status: locked={locked}, old_unassigned={unassigned_old_count}, assigned={assigned_count}")
+        
+        return {
+            'locked': locked,
+            'reason': reason,
+            'unassigned_old_enquiries': unassigned_old_count,
+            'assigned_enquiries': assigned_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking staff lock status: {str(e)}")
+        return {
+            'locked': False,
+            'reason': f'Error checking lock status: {str(e)}',
+            'unassigned_old_enquiries': 0,
+            'assigned_enquiries': 0
+        }
+
+def can_assign_staff_to_enquiry(enquiry, staff_lock_status=None):
+    """Check if staff can be assigned to a specific enquiry"""
+    try:
+        if staff_lock_status is None:
+            staff_lock_status = check_staff_assignment_lock_status()
+        
+        # If staff assignments are not locked globally, allow assignment
+        if not staff_lock_status['locked']:
+            return True
+        
+        # If locked, only allow assignment to old enquiries without staff
+        one_day_ago = datetime.utcnow() - timedelta(days=1)
+        enquiry_date = enquiry.get('date', datetime.utcnow())
+        
+        # Convert string date to datetime if needed
+        if isinstance(enquiry_date, str):
+            enquiry_date = parse_date_safely(enquiry_date)
+        
+        is_old_enquiry = enquiry_date < one_day_ago
+        current_staff = enquiry.get('staff', '')
+        has_no_staff = current_staff in [None, '', 'Public Form', 'WhatsApp Bot', 'WhatsApp Form']
+        
+        can_assign = is_old_enquiry and has_no_staff
+        
+        logger.debug(f"Can assign staff to enquiry {enquiry.get('_id')}: {can_assign} (old: {is_old_enquiry}, no_staff: {has_no_staff})")
+        
+        return can_assign
+        
+    except Exception as e:
+        logger.error(f"Error checking if can assign staff to enquiry: {str(e)}")
+        return False
+
+def get_enquiry_staff_dropdown_status(enquiry, staff_lock_status=None):
+    """Get detailed staff dropdown status for frontend UI control"""
+    try:
+        if staff_lock_status is None:
+            staff_lock_status = check_staff_assignment_lock_status()
+        
+        enquiry_date = enquiry.get('date', datetime.utcnow())
+        if isinstance(enquiry_date, str):
+            enquiry_date = parse_date_safely(enquiry_date)
+        
+        one_day_ago = datetime.utcnow() - timedelta(days=1)
+        is_old_enquiry = enquiry_date < one_day_ago
+        
+        current_staff = enquiry.get('staff', '')
+        has_no_staff = current_staff in [None, '', 'Public Form', 'WhatsApp Bot', 'WhatsApp Form']
+        
+        # Determine dropdown status
+        if not staff_lock_status['locked']:
+            # No global lock - all dropdowns enabled
+            return {
+                'enabled': True,
+                'clickable': True,
+                'reason': 'Staff assignments are unlocked',
+                'ui_state': 'enabled',
+                'can_assign': True
+            }
+        else:
+            # Global lock active
+            if is_old_enquiry and has_no_staff:
+                # Old enquiry without staff - dropdown ENABLED
+                return {
+                    'enabled': True,
+                    'clickable': True,
+                    'reason': 'Old enquiry - staff assignment required to unlock others',
+                    'ui_state': 'enabled_priority',
+                    'can_assign': True
+                }
+            elif is_old_enquiry and not has_no_staff:
+                # Old enquiry with staff - dropdown ENABLED (can change)
+                return {
+                    'enabled': True,
+                    'clickable': True,
+                    'reason': 'Old enquiry with staff assigned',
+                    'ui_state': 'enabled',
+                    'can_assign': True
+                }
+            else:
+                # New enquiry - dropdown COMPLETELY DISABLED
+                return {
+                    'enabled': False,
+                    'clickable': False,
+                    'reason': f'New enquiry - assign staff to {staff_lock_status["unassigned_old_enquiries"]} old enquiry(ies) first',
+                    'ui_state': 'disabled_locked',
+                    'can_assign': False
+                }
+        
+    except Exception as e:
+        logger.error(f"Error getting dropdown status: {str(e)}")
+        return {
+            'enabled': False,
+            'clickable': False,
+            'reason': f'Error: {str(e)}',
+            'ui_state': 'disabled_error',
+            'can_assign': False
+        }
 
 @enquiry_bp.route('/enquiries/<enquiry_id>', methods=['DELETE'])
 @jwt_required()
