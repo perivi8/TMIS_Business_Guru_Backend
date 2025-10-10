@@ -627,13 +627,10 @@ def get_clients():
             print(f"Error counting clients: {str(count_error)}")
             return jsonify({'error': 'Error accessing client data', 'clients': []}), 500
         
-        # Admin can see all clients, users can see only their clients
-        if user_role == 'admin':
-            print("Admin user - fetching all clients")
-            clients_cursor = clients_collection.find()
-        else:
-            print(f"Regular user - fetching clients for user ID: {current_user_id}")
-            clients_cursor = clients_collection.find({'created_by': current_user_id})
+        # MODIFICATION: Allow all users (including non-admins) to see all clients
+        # Previously: Admin could see all clients, users could see only their clients
+        print("Fetching all clients for user (modified to show all clients for all users)")
+        clients_cursor = clients_collection.find()
         
         clients_list = []
         processed_count = 0
@@ -701,6 +698,178 @@ def get_clients():
         
     except Exception as e:
         print(f"CRITICAL ERROR in get_clients: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'clients': []}), 500
+
+@client_bp.route('/clients/my', methods=['GET'])
+@jwt_required()
+def get_my_clients():
+    try:
+        print("=== GET MY CLIENTS DEBUG ===")
+        print("JWT required endpoint accessed")
+        
+        # Get JWT claims for debugging
+        claims = get_jwt()
+        current_user_id = get_jwt_identity()
+        user_role = claims.get('role', 'user')
+        user_email = claims.get('email', current_user_id)
+        
+        print(f"User ID: {current_user_id}")
+        print(f"User Role: {user_role}")
+        print(f"User Email: {user_email}")
+        
+        # Check database connection first
+        if db is None:
+            print("Database connection not available")
+            return jsonify({
+                'error': 'Database connection failed', 
+                'clients': [],
+                'debug_info': {
+                    'user_id': current_user_id,
+                    'user_role': user_role,
+                    'db_status': 'disconnected'
+                }
+            }), 500
+        
+        try:
+            db.command("ping")
+            print("Database connection successful")
+        except Exception as db_error:
+            print(f"Database connection failed: {str(db_error)}")
+            return jsonify({'error': 'Database connection failed', 'clients': []}), 500
+        
+        # Fetch only clients created by the current user
+        print(f"Fetching clients created by user: {current_user_id}")
+        clients_cursor = clients_collection.find({'created_by': current_user_id}) if clients_collection is not None else []
+        
+        clients_list = []
+        processed_count = 0
+        error_count = 0
+        
+        for client in clients_cursor:
+            try:
+                processed_count += 1
+                print(f"Processing client {processed_count}: {client.get('_id')}")
+                
+                # Get staff information for created_by
+                if 'created_by' in client and client['created_by']:
+                    try:
+                        staff = users_collection.find_one({'_id': ObjectId(client['created_by'])}) if users_collection is not None else None
+                        if staff:
+                            client['staff_name'] = staff['username']
+                            client['staff_email'] = staff['email']
+                            client['created_by_name'] = staff['username']
+                        else:
+                            print(f"Staff not found for created_by: {client['created_by']}")
+                            client['staff_name'] = 'Unknown'
+                            client['staff_email'] = 'Unknown'
+                            client['created_by_name'] = 'Unknown'
+                    except Exception as staff_error:
+                        print(f"Error getting staff info: {str(staff_error)}")
+                        client['staff_name'] = 'Unknown'
+                        client['staff_email'] = 'Unknown'
+                        client['created_by_name'] = 'Unknown'
+                else:
+                    client['staff_name'] = 'Unknown'
+                    client['staff_email'] = 'Unknown'
+                    client['created_by_name'] = 'Unknown'
+                
+                # Get staff information for updated_by if exists
+                if 'updated_by' in client and client['updated_by']:
+                    try:
+                        updated_staff = users_collection.find_one({'_id': ObjectId(client['updated_by'])}) if users_collection is not None else None
+                        client['updated_by_name'] = updated_staff['username'] if updated_staff else 'Unknown'
+                    except Exception as e:
+                        client['updated_by_name'] = 'Unknown'
+                
+                # Convert ObjectId to string
+                client['_id'] = str(client['_id'])
+                
+                # Log client data for debugging
+                print(f"Client {processed_count} data: ID={client['_id']}, Name={client.get('legal_name', 'N/A')}, Status={client.get('status', 'N/A')}")
+                
+                clients_list.append(client)
+                
+            except Exception as e:
+                error_count += 1
+                print(f"Error processing client {processed_count}: {str(e)}")
+                # Skip this client but continue with others
+                continue
+        
+        print(f"=== PROCESSING SUMMARY ===")
+        print(f"Total clients processed: {processed_count}")
+        print(f"Clients successfully added to list: {len(clients_list)}")
+        print(f"Errors encountered: {error_count}")
+        
+        return jsonify({'clients': clients_list}), 200
+        
+    except Exception as e:
+        print(f"CRITICAL ERROR in get_my_clients: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e), 'clients': []}), 500
+
+        
+        for client in clients_cursor:
+            try:
+                processed_count += 1
+                print(f"Processing client {processed_count}: {client.get('_id')}")
+                
+                # Get staff information for created_by
+                if 'created_by' in client and client['created_by']:
+                    try:
+                        staff = users_collection.find_one({'_id': ObjectId(client['created_by'])})
+                        if staff:
+                            client['staff_name'] = staff['username']
+                            client['staff_email'] = staff['email']
+                            client['created_by_name'] = staff['username']
+                        else:
+                            print(f"Staff not found for created_by: {client['created_by']}")
+                            client['staff_name'] = 'Unknown'
+                            client['staff_email'] = 'Unknown'
+                            client['created_by_name'] = 'Unknown'
+                    except Exception as staff_error:
+                        print(f"Error getting staff info: {str(staff_error)}")
+                        client['staff_name'] = 'Unknown'
+                        client['staff_email'] = 'Unknown'
+                        client['created_by_name'] = 'Unknown'
+                else:
+                    client['staff_name'] = 'Unknown'
+                    client['staff_email'] = 'Unknown'
+                    client['created_by_name'] = 'Unknown'
+                
+                # Get staff information for updated_by if exists
+                if 'updated_by' in client and client['updated_by']:
+                    try:
+                        updated_staff = users_collection.find_one({'_id': ObjectId(client['updated_by'])})
+                        client['updated_by_name'] = updated_staff['username'] if updated_staff else 'Unknown'
+                    except Exception as e:
+                        client['updated_by_name'] = 'Unknown'
+                
+                # Convert ObjectId to string
+                client['_id'] = str(client['_id'])
+                
+                # Log client data for debugging
+                print(f"Client {processed_count} data: ID={client['_id']}, Name={client.get('legal_name', 'N/A')}, Status={client.get('status', 'N/A')}")
+                
+                clients_list.append(client)
+                
+            except Exception as e:
+                error_count += 1
+                print(f"Error processing client {processed_count}: {str(e)}")
+                # Skip this client but continue with others
+                continue
+        
+        print(f"=== PROCESSING SUMMARY ===")
+        print(f"Total clients processed: {processed_count}")
+        print(f"Clients successfully added to list: {len(clients_list)}")
+        print(f"Errors encountered: {error_count}")
+        
+        return jsonify({'clients': clients_list}), 200
+        
+    except Exception as e:
+        print(f"CRITICAL ERROR in get_my_clients: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e), 'clients': []}), 500
